@@ -17,6 +17,8 @@ export interface Engine {
   setRate(r: number): void;
   analyser: AnalyserNode | null;
   onEnded: (() => void) | null;
+  /** The engine started or stopped by itself (a click on the video, buffering ended). */
+  onPlayingChange?: ((playing: boolean) => void) | null;
   destroy(): void;
 }
 
@@ -293,6 +295,7 @@ export class YouTubeEngine implements Engine {
   readonly kind = 'youtube' as const;
   private player: YTPlayer | null = null;
   private last = { t: 0, at: 0, playing: false };
+  onPlayingChange: ((playing: boolean) => void) | null = null;
   analyser = null; // a cross-origin player gives no access to its audio, so no visualiser is faked
   onEnded: (() => void) | null = null;
   private el: HTMLElement;
@@ -317,7 +320,10 @@ export class YouTubeEngine implements Engine {
           onError: (e: { data: number }) => reject(new Error(e.data === 101 || e.data === 150 ? 'The owner of this video does not allow it to play here.' : 'This video could not be played.')),
           onStateChange: (e: { data: number }) => {
             if (e.data === 0) this.onEnded?.();
+            const wasPlaying = this.last.playing;
             this.last = { t: this.player!.getCurrentTime(), at: performance.now(), playing: e.data === 1 };
+            // 1 playing, 2 paused. Buffering (3) keeps the last state so the clock does not stutter.
+            if ((e.data === 1 || e.data === 2) && wasPlaying !== (e.data === 1)) this.onPlayingChange?.(e.data === 1);
           },
         },
       });

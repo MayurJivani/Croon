@@ -2,11 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { asyncH, requireAuth, searchLimiter, validate, writeLimiter, roomLimiter, HttpError } from '../middleware/http.ts';
 import { discover, importTrack, autoFind, startArtistImport, getJob } from '../services/imports.ts';
-import { search, facets, songMeta, crate, CRATES, addSourceToMemory, playableKeys, catalogRaw } from '../services/catalog.ts';
+import { search, facets, songMeta, crate, CRATES, addSourceToMemory, playableKeys, catalogRaw, saveLyricOffset, rejectSource } from '../services/catalog.ts';
 import { lyricsFor, lookupLyrics } from '../services/lyrics.ts';
 import { verifyVideo, videoIdFrom, searchKaraoke, searchAvailable } from '../services/youtube.ts';
 import { homeShelves, songBoard, personalBest, weeklyBoard } from '../services/stats.ts';
 import { houseSong } from '../../../../packages/core/src/houseband.ts';
+import { cachedTranslation, translateSong, translationProvider } from '../services/translate.ts';
 import { sql } from '../db/client.ts';
 
 export const songsRouter = Router();
@@ -91,6 +92,19 @@ songsRouter.get('/:key/lyrics', validate(z.object({ key }), 'params'), asyncH(as
 }));
 
 // Attaching a karaoke video: the client sends a link, the server extracts the id and checks it with YouTube.
+// English lyrics: a cached translation is free for anyone; making a new one spends the provider's
+// allowance, so that takes a signed-in user and the write rate limit.
+songsRouter.get('/:key/translation', validate(z.object({ key }), 'params'), asyncH(async (req, res) => {
+  const k = String(req.params.key);
+  const cached = await cachedTranslation(k);
+  if (cached) return res.json({ lines: cached, cached: true });
+  res.json({ lines: null, available: !!translationProvider(), canCreate: !!req.session.userId });
+}));
+songsRouter.post('/:key/translation', requireAuth, writeLimiter, validate(z.object({ key }), 'params'), asyncH(async (req, res) => {
+  const k = String(req.params.key);
+  res.json({ lines: (await cachedTranslation(k)) ?? (await translateSong(k)), cached: false });
+}));
+
 songsRouter.post('/:key/sources', requireAuth, writeLimiter, validate(z.object({ url: z.string().min(11).max(300) })), asyncH(async (req, res) => {
   const k = String(req.params.key);
   if (!k.startsWith('dz:') || !songMeta(k)) throw new HttpError(404, 'Song not found.');
@@ -101,6 +115,18 @@ songsRouter.post('/:key/sources', requireAuth, writeLimiter, validate(z.object({
   await sql`insert into song_sources (song_key, video_id, video_title, channel, label, added_by) values (${k}, ${v.videoId}, ${v.videoTitle}, ${v.channel}, ${v.label}, ${req.session.userId}) on conflict do nothing`;
   addSourceToMemory(k, v);
   res.status(201).json({ source: v, song: songMeta(k) });
+}));
+
+songsRouter.post('/:key/sources/:videoId/reject', requireAuth, writeLimiter, asyncH(async (req, res) => {
+  const k = String(req.params.key);
+  if (!(await rejectSource(k, String(req.params.videoId), req.session.userId))) throw new HttpError(404, 'That video is not attached to this song.');
+  res.json({ ok: true, song: songMeta(k) });
+}));
+
+songsRouter.post('/:key/sync', requireAuth, writeLimiter, validate(z.object({ videoId: z.string().regex(/^[A-Za-z0-9_-]{11}$/), offset: z.number().min(-120).max(120) })), asyncH(async (req, res) => {
+  const k = String(req.params.key);
+  if (!(await saveLyricOffset(k, req.body.videoId, req.body.offset, req.session.userId))) throw new HttpError(404, 'That video is not attached to this song.');
+  res.json({ ok: true, song: songMeta(k) });
 }));
 
 songsRouter.post('/:key/autofind', requireAuth, writeLimiter, validate(z.object({ key }), 'params'), asyncH(async (req, res) => {

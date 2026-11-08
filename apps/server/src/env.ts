@@ -10,6 +10,9 @@ const schema = z.object({
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   // Optional. Without it, karaoke videos can only be attached by pasting a link.
   YOUTUBE_API_KEY: z.string().optional().transform((v) => v || undefined),
+  // Optional, for English lyric translations (cached per song). Either works; Google wins if both are set.
+  GOOGLE_TRANSLATE_API_KEY: z.string().optional().transform((v) => v || undefined),
+  DEEPL_API_KEY: z.string().optional().transform((v) => v || undefined),
   // Reverse proxies in front (Caddy, cloudflared), so rate limits see the visitor.
   TRUST_PROXY: z.coerce.number().int().min(0).default(0),
   // Pre-fetch synced lyrics for playable songs at startup so lyric search has text to search.

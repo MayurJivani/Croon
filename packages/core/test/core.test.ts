@@ -7,6 +7,7 @@ import { addEntry, toggleVote, roundOf, moveEntry, skipThreshold, type QueueEntr
 import { yin, freqToMidi } from '../src/pitch.ts';
 import { scoreFull, scoreLite, pcDistance, type Frame } from '../src/scoring.ts';
 import { MODES, withParts } from '../src/modes.ts';
+import { romanize, needsRoman } from '../src/romanize.ts';
 
 test('LRC: line timing, multi-tags, offset, and no fake word timing', () => {
   const l = parseLrc('[ti:x]\n[offset:+500]\n[00:10.50][01:00.00]Hello world\n[00:12.00]Second line\n[00:14.00]', 70);
@@ -126,4 +127,18 @@ test('modes: duets split lines, battles pick the higher score', () => {
   const r = MODES.battle.resolve([{ pid: 'a', name: 'Ann', total: 71 }, { pid: 'b', name: 'Bob', total: 80 }]);
   assert.deepEqual(r.winners, ['b']);
   assert.equal(shiftLyrics(song.lyrics, 1).lines[0].t, song.lyrics.lines[0].t + 1);
+});
+
+test('romanisation reads the way lyric sheets are written', () => {
+  assert.equal(romanize('तुम ही हो'), 'tum hi ho');
+  assert.equal(romanize('दिलवाले दुल्हनिया ले जाएंगे'), 'dilvaale dulhaniya le jaaenge');
+  assert.equal(romanize('कल हो ना हो'), 'kal ho na ho');
+  assert.equal(romanize('ਸਤ ਸ੍ਰੀ ਅਕਾਲ'), 'sat sri akaal');
+  assert.equal(romanize('사랑해요'), 'saranghaeyo');
+  assert.equal(romanize('ありがとう カラオケ'), 'arigatou karaoke');
+  assert.equal(romanize('がっこう'), 'gakkou');
+  assert.equal(romanize('வணக்கம்'), 'vanakkam');
+  assert.equal(romanize('Already Latin'), 'Already Latin');
+  assert.equal(needsRoman('Tum hi ho'), false);
+  assert.equal(romanize('君の名は'), '君no名ha', 'kanji pass through, kana around them still romanise');
 });

@@ -19,6 +19,8 @@ export type RoomDeps = {
   randomSong(): string | null;
   lyrics(song: SongMeta, inline: string | null): Promise<Lyrics | null>;
   onPlay(songKey: string): void;
+  /** The host nudged a video's lyric timing: remember it for the next time anyone plays it. */
+  onLyricOffset(songKey: string, videoId: string, offset: number): void;
   onScored(r: { room: Room; pid: string; userId: string | null; name: string; song: SongMeta; mode: ModeId; score: Score; partnerUserId: string | null }): Promise<void>;
   broadcast(room: Room): void;
 };
@@ -300,7 +302,7 @@ export class Room {
       singers = [...this.participants.values()].filter((p) => p.role !== 'stage' && p.connected && !(this.kind === 'event' && p.role === 'host')).map((p) => p.pid);
     }
     this.current = {
-      entryId: e.id, song, mode: e.mode as ModeId, singers, timeline: stopped(0), lyricOffset: 0, lyricsText,
+      entryId: e.id, song, mode: e.mode as ModeId, singers, timeline: stopped(0), lyricOffset: song.sources[0]?.kind === 'youtube' ? song.sources[0].lyricOffset ?? 0 : 0, lyricsText,
       skipVotes: [], cheers: 0, scores: {}, result: null, frames: new Map(), timers: [], lyrics: null, awaitingFrames: new Set(),
     };
     this.phase = 'announce';
@@ -435,6 +437,8 @@ export class Room {
     this.requireHost(by);
     if (!this.current) throw new RoomError('Nothing is playing.');
     this.current.lyricOffset = Math.round(offset * 100) / 100;
+    const src = this.current.song.sources[0];
+    if (src?.kind === 'youtube') this.deps.onLyricOffset(this.current.song.key, src.videoId, this.current.lyricOffset);
     this.changed();
   }
 

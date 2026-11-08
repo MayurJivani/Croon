@@ -14,6 +14,8 @@ type Props = {
   /** Duet colours on: each part has its own ink. */
   parts?: boolean;
   variant?: 'stage' | 'phone' | 'player';
+  /** Sync mode: tapping a line means "this line is being sung right now". */
+  onPickLine?: (lineIndex: number) => void;
 };
 
 const partClass = (l: Line, parts?: boolean) => (parts ? (l.part === 1 ? 'p1' : l.part === 2 ? 'p2' : 'pboth') : '');
@@ -33,11 +35,12 @@ function words(l: Line) {
   return out;
 }
 
-function LineView({ line, li, active, state, prefs, parts, myPart }: { line: Line; li: number; active: boolean; state: 'past' | 'now' | 'next'; prefs: LyricPrefs; parts?: boolean; myPart?: number }) {
+function LineView({ line, li, active, state, prefs, parts, myPart, onPick }: { line: Line; li: number; active: boolean; state: 'past' | 'now' | 'next'; prefs: LyricPrefs; parts?: boolean; myPart?: number; onPick?: (i: number) => void }) {
   const mine = !myPart || !line.part || line.part === myPart;
   const roman = prefs.roman && line.words.some((w) => w.roman);
   return (
-    <div className={`lyr-line ${state} ${partClass(line, parts)} ${mine ? '' : 'theirs'}`} data-active={active || undefined} data-line={li}>
+    <div className={`lyr-line ${state} ${partClass(line, parts)} ${mine ? '' : 'theirs'}${onPick ? ' pickable' : ''}`} data-active={active || undefined} data-line={li}
+      {...(onPick ? { role: 'button', tabIndex: 0, title: 'Tap the moment this line is sung', onClick: () => onPick(li), onKeyDown: (e: React.KeyboardEvent) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onPick(li)) } : {})}>
       <div className="lyr-text">
         {words(line).map((word) => (
           <span key={word[0].idx} className="word">
@@ -55,7 +58,7 @@ function LineView({ line, li, active, state, prefs, parts, myPart }: { line: Lin
   );
 }
 
-export function Lyrics({ lyrics, pos, prefs, myPart, parts, variant = 'player' }: Props) {
+export function Lyrics({ lyrics, pos, prefs, myPart, parts, variant = 'player', onPickLine }: Props) {
   const [idx, setIdx] = useState(-1);
   const [count, setCount] = useState(0);
   const root = useRef<HTMLDivElement>(null);
@@ -108,19 +111,19 @@ export function Lyrics({ lyrics, pos, prefs, myPart, parts, variant = 'player' }
     const bottom = cur % 2 === 0 ? ls[cur + 1] : ls[cur];
     body = (
       <div className="lyr-dual">
-        {[top, bottom].map((l) => l && <LineView key={`${ls.indexOf(l)}`} line={l} li={ls.indexOf(l)} active={l === nowLine} state={l === nowLine ? 'now' : 'next'} prefs={prefs} parts={parts} myPart={myPart} />)}
+        {[top, bottom].map((l) => l && <LineView key={`${ls.indexOf(l)}`} line={l} li={ls.indexOf(l)} active={l === nowLine} state={l === nowLine ? 'now' : 'next'} prefs={prefs} parts={parts} myPart={myPart} onPick={onPickLine} />)}
         {!top && !bottom && <div className="lyr-line next" />}
       </div>
     );
   } else if (style === 'cinematic') {
-    body = nowLine ? <LineView key={idx} line={nowLine} li={ls.indexOf(nowLine)} active state="now" prefs={prefs} parts={parts} myPart={myPart} /> : upcoming && <LineView key={`n${idx}`} line={upcoming} li={ls.indexOf(upcoming)} active={false} state="next" prefs={prefs} parts={parts} myPart={myPart} />;
+    body = nowLine ? <LineView key={idx} line={nowLine} li={ls.indexOf(nowLine)} active state="now" prefs={prefs} parts={parts} myPart={myPart} onPick={onPickLine} /> : upcoming && <LineView key={`n${idx}`} line={upcoming} li={ls.indexOf(upcoming)} active={false} state="next" prefs={prefs} parts={parts} myPart={myPart} onPick={onPickLine} />;
   } else {
     body = (
       <>
-        {idx > 0 && <LineView key={idx - 1} line={ls[idx - 1]} li={ls.indexOf(ls[idx - 1])} active={false} state="past" prefs={prefs} parts={parts} myPart={myPart} />}
-        {nowLine && <LineView key={idx} line={nowLine} li={ls.indexOf(nowLine)} active state="now" prefs={prefs} parts={parts} myPart={myPart} />}
-        {upcoming && <LineView key={idx + 1} line={upcoming} li={ls.indexOf(upcoming)} active={false} state="next" prefs={prefs} parts={parts} myPart={myPart} />}
-        {variant !== 'phone' && ls[idx + 2] && <LineView key={idx + 2} line={ls[idx + 2]} li={ls.indexOf(ls[idx + 2])} active={false} state="next" prefs={prefs} parts={parts} myPart={myPart} />}
+        {idx > 0 && <LineView key={idx - 1} line={ls[idx - 1]} li={ls.indexOf(ls[idx - 1])} active={false} state="past" prefs={prefs} parts={parts} myPart={myPart} onPick={onPickLine} />}
+        {nowLine && <LineView key={idx} line={nowLine} li={ls.indexOf(nowLine)} active state="now" prefs={prefs} parts={parts} myPart={myPart} onPick={onPickLine} />}
+        {upcoming && <LineView key={idx + 1} line={upcoming} li={ls.indexOf(upcoming)} active={false} state="next" prefs={prefs} parts={parts} myPart={myPart} onPick={onPickLine} />}
+        {variant !== 'phone' && ls[idx + 2] && <LineView key={idx + 2} line={ls[idx + 2]} li={ls.indexOf(ls[idx + 2])} active={false} state="next" prefs={prefs} parts={parts} myPart={myPart} onPick={onPickLine} />}
       </>
     );
   }

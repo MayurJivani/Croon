@@ -144,6 +144,26 @@ export async function discography(artistId: string): Promise<Raw[]> {
   return [...best.values()].sort((a, b) => b.rank - a.rank);
 }
 
+/**
+ * Is this video a karaoke or instrumental take of this song? It must name the artist (title or
+ * channel), contain every main word of the song's title, and not be a vocals-only, reaction,
+ * lesson or speed-changed upload. Loose matching once attached an unrelated song to "Fatal".
+ */
+export function videoMatches(videoTitle: string, channel: string, title: string, artist: string): boolean {
+  const t = normalizeTitle(videoTitle);
+  if (!/\b(karaoke|instrumental|backing track|minus one|sing along|singalong)\b/.test(t)) return false;
+  if (/\b(acapella|a cappella|acappella|vocals only|reaction|tutorial|lesson|slowed|sped up|nightcore|8d)\b/.test(t)) return false;
+  const lead = normalizeTitle(artist.split(/,|&| feat| ft\b/i)[0]);
+  const who = `${t} ${normalizeTitle(channel)}`;
+  if (lead && !lead.split(' ').filter((w) => w.length > 1).every((w) => new RegExp(`\\b${w}\\b`).test(who))) return false;
+  const words = normalizeTitle(stripVersionSuffix(title).replace(/\((feat|ft)[^)]*\)/gi, '')).split(' ').filter((w) => w.length > 2).slice(0, 4);
+  return words.every((w) => new RegExp(`\\b${w}\\b`).test(t));
+}
+
+async function rejectedVideos(key: string) {
+  return new Set((await sql<{ video_id: string }[]>`select video_id from song_sources where song_key = ${key} and rejected`).map((r) => r.video_id));
+}
+
 export type AutoFind = { key: string; lyrics: 'word' | 'line' | 'none'; video: 'attached' | 'had' | 'none' | 'skipped' | 'no-key' | 'quota' };
 
 /** Synced lyrics, then a karaoke video, for one song. Never re-searches a song that has a video. */
@@ -161,11 +181,9 @@ export async function autoFind(key: string, userId: string | null): Promise<Auto
     if (err instanceof QuotaError) return { key, lyrics, video: 'quota' };
     throw err;
   }
-  const words = normalizeTitle(stripVersionSuffix(meta.title)).split(' ').filter((w) => w.length > 2);
+  const rejected = await rejectedVideos(key);
   for (const cand of found) {
-    if (cand.label === 'original') continue;
-    const t = normalizeTitle(cand.videoTitle);
-    if (words.length && !words.some((w) => t.includes(w))) continue;
+    if (rejected.has(cand.videoId) || !videoMatches(cand.videoTitle, cand.channel, meta.title, meta.artist)) continue;
     const v = await verifyVideo(cand.videoId);
     if (!v || v.label === 'original') continue;
     await sql`insert into song_sources (song_key, video_id, video_title, channel, label, added_by) values (${key}, ${v.videoId}, ${v.videoTitle}, ${v.channel}, ${v.label}, ${userId}) on conflict do nothing`;

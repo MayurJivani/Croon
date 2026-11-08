@@ -7,7 +7,7 @@ import type { SongMeta } from '../../../../packages/core/src/protocol.ts';
 import { shiftLyrics, targets, lineAt } from '../../../../packages/core/src/lyrics.ts';
 import { scoreFull, scoreLite, type Frame, type Score } from '../../../../packages/core/src/scoring.ts';
 import { useEngine, useMediaSession, useGetter } from '../lib/playback.ts';
-import { useSongLyrics, usePrefs, DEFAULT_PREFS, type LyricPrefs } from '../lib/lyrics.ts';
+import { useSongLyrics, usePrefs, DEFAULT_PREFS, useTranslation, canTranslate, type LyricPrefs } from '../lib/lyrics.ts';
 import { HouseEngine } from '../audio/engines.ts';
 import type { Mic as MicT } from '../audio/mic.ts';
 import { Lyrics } from '../components/Lyrics.tsx';
@@ -118,14 +118,14 @@ export default function Sing() {
     posRef.current = 0;
     playingRef.current = false;
     setPlaying(false);
-    setOffset(0);
     if (key === 'file') return setSong(null);
     api<{ song: SongMeta }>(`/songs/${encodeURIComponent(key)}`).then((r) => setSong(r.song)).catch((e) => setErr(e.message));
   }, [key]);
 
   const lyr = useSongLyrics(song, inline);
   const { engine, duration, error } = useEngine(song, { videoEl, fileUrl, enabled: !!song });
-  const lyrics = useMemo(() => (lyr.lyrics ? shiftLyrics(lyr.lyrics, offset) : null), [lyr.lyrics, offset]);
+  const tr = useTranslation(song, lyr.lyrics, prefs.translation && canTranslate(song, lyr.lyrics));
+  const lyrics = useMemo(() => (tr.lyrics ? shiftLyrics(tr.lyrics, offset) : null), [tr.lyrics, offset]);
   const ts = useMemo(() => (lyrics?.pitched ? targets(lyrics) : []), [lyrics]);
   const getPos = useGetter(() => (playingRef.current && engine ? engine.position() : posRef.current));
   const total = duration || song?.duration || 0;
@@ -170,7 +170,33 @@ export default function Sing() {
   useEffect(() => {
     if (!engine) return;
     engine.onEnded = () => void finish();
+    // The video can be paused from YouTube's own player; the transport follows the truth.
+    engine.onPlayingChange = (p) => {
+      playingRef.current = p;
+      setPlaying(p);
+      if (!p) {
+        posRef.current = engine.position();
+        mic.current?.stop();
+      }
+    };
   }, [engine, finish]);
+  const savedOffset = song?.sources[0]?.kind === 'youtube' ? song.sources[0].lyricOffset ?? 0 : 0;
+  useEffect(() => setOffset(savedOffset), [song?.key, savedOffset]);
+  const pickLine = (i: number) => {
+    const line = lyr.lyrics?.lines[i];
+    if (line) setOffset(Math.round((getPos() - line.t) * 100) / 100);
+  };
+  const saveTiming = async () => {
+    const src = song?.sources[0];
+    if (!song || src?.kind !== 'youtube') return;
+    try {
+      const r = await api<{ song: SongMeta }>(`/songs/${encodeURIComponent(song.key)}/sync`, { method: 'POST', body: { videoId: src.videoId, offset } });
+      setSong(r.song);
+      setErr(null);
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
 
   const play = () => {
     if (!engine) return;
@@ -285,7 +311,8 @@ export default function Sing() {
             <div className="beam-bg" aria-hidden />
             {isVideo && <div className="video-wrap" ref={setVideoEl} />}
             {scoring && ts.length > 0 && <PitchLane targets={ts} pos={getPos} trails={trail.current} height={full ? 110 : 72} />}
-            {lyrics ? <Lyrics lyrics={lyrics} pos={getPos} prefs={prefs} variant={full ? 'stage' : 'player'} /> : (
+            {lyrics && isVideo && <p className="sync-hint">Lyrics out of step with the video? Tap a line the moment you hear it.</p>}
+            {lyrics ? <Lyrics lyrics={lyrics} pos={getPos} prefs={prefs} variant={full ? 'stage' : 'player'} onPickLine={isVideo || src.kind === 'file' ? pickLine : undefined} /> : (
               <div className="lyrics">{lyr.status === 'loading' ? <Loading label="Fetching lyrics" /> : <p className="empty">{isVideo ? 'No synced lyrics for this song. Karaoke videos show their own lyrics on screen.' : 'No lyrics available for this track.'}</p>}</div>
             )}
             <div className="transport">
@@ -328,7 +355,7 @@ export default function Sing() {
           </AnimatePresence>
         </div>
         <aside className="panel" aria-label="Player settings">
-          <LyricSettings prefs={prefs} set={setPrefs} hasRoman={!!lyrics?.lines.some((l) => l.words.some((w) => w.roman))} hasTranslation={!!lyrics?.lines.some((l) => l.translation)} wordTimed={!!lyrics?.wordTimed} />
+          <LyricSettings prefs={prefs} set={setPrefs} hasRoman={!!lyrics?.lines.some((l) => l.words.some((w) => w.roman))} hasTranslation={canTranslate(song, lyr.lyrics)} wordTimed={!!lyrics?.wordTimed} note={tr.note} />
           {!isVideo && (
             <div>
               <h3>Background</h3>
@@ -342,12 +369,14 @@ export default function Sing() {
             <div>
               <h3>Lyric timing</h3>
               <div className="offset">
-                <Key size="sm" onClick={() => setOffset((o) => Math.round((o - 0.25) * 100) / 100)} aria-label="Lyrics earlier">−¼s</Key>
+                <Key size="sm" onClick={() => setOffset((o) => Math.round((o - 0.25) * 100) / 100)} aria-label="Lyrics earlier">−0.25s</Key>
                 <span className="num" style={{ minWidth: 60, textAlign: 'center' }}>{offset > 0 ? '+' : ''}{offset.toFixed(2)}s</span>
-                <Key size="sm" onClick={() => setOffset((o) => Math.round((o + 0.25) * 100) / 100)} aria-label="Lyrics later">+¼s</Key>
+                <Key size="sm" onClick={() => setOffset((o) => Math.round((o + 0.25) * 100) / 100)} aria-label="Lyrics later">+0.25s</Key>
                 <Key size="sm" onClick={() => lyr.lyrics?.lines[0] && setOffset(Math.round((pos - lyr.lyrics.lines[0].t) * 100) / 100)} title="Press when the first line starts">First line now</Key>
               </div>
-              <p className="field-hint" style={{ marginTop: 6 }}>Karaoke videos often start earlier or later than the original recording. Nudge until the words land.</p>
+              <p className="field-hint" style={{ marginTop: 6 }}>Karaoke videos are often a different edit from the recording the lyrics were timed to. Tap a lyric line as it is sung, or nudge here.</p>
+              {isVideo && user && offset !== savedOffset && <Key size="sm" tone="hot" onClick={saveTiming} style={{ marginTop: 8 }}>Save this timing for everyone</Key>}
+              {isVideo && savedOffset !== 0 && offset === savedOffset && <p className="field-hint">Using timing saved by an earlier singer.</p>}
             </div>
           )}
           {lyr.credit && <p className="field-hint">{lyr.credit}</p>}

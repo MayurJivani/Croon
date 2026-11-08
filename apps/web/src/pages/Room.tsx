@@ -11,7 +11,7 @@ import { positionAt } from '../../../../packages/core/src/timeline.ts';
 import { shiftLyrics } from '../../../../packages/core/src/lyrics.ts';
 import type { Frame } from '../../../../packages/core/src/scoring.ts';
 import { useRoom, roomToken, type Reply } from '../lib/room.ts';
-import { useSongLyrics, usePrefs, DEFAULT_PREFS, type LyricPrefs } from '../lib/lyrics.ts';
+import { useSongLyrics, usePrefs, DEFAULT_PREFS, useTranslation, canTranslate, type LyricPrefs } from '../lib/lyrics.ts';
 import { useGetter } from '../lib/playback.ts';
 import { useSession } from '../lib/session.tsx';
 import { api } from '../lib/api.ts';
@@ -347,11 +347,12 @@ export default function Room() {
   useEffect(() => void rememberRoom(code), [code]);
   const c = view?.current ?? null;
   const lyr = useSongLyrics(c?.song ?? null, c?.lyricsText ?? null);
+  const tr = useTranslation(c?.song ?? null, lyr.lyrics, prefs.translation && canTranslate(c?.song ?? null, lyr.lyrics));
   const lyrics = useMemo(() => {
-    if (!lyr.lyrics || !c) return null;
-    const l = MODES[c.mode].parts ? withParts(lyr.lyrics) : lyr.lyrics;
+    if (!tr.lyrics || !c) return null;
+    const l = MODES[c.mode].parts ? withParts(tr.lyrics) : tr.lyrics;
     return shiftLyrics(l, c.lyricOffset);
-  }, [lyr.lyrics, c?.lyricOffset, c?.mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tr.lyrics, c?.lyricOffset, c?.mode]); // eslint-disable-line react-hooks/exhaustive-deps
   const getPos = useGetter(() => (c ? positionAt(c.timeline, serverNow()) : 0));
   const [pos, setPos] = useState(0);
   useEffect(() => {
@@ -431,7 +432,7 @@ export default function Room() {
             {iPlayAudio && <RoomAudio view={view} serverNow={serverNow} emit={emit} stage={false} />}
             {view.phase === 'announce' && <Spotlight singers={singers} song={c.song} mode={c.mode} />}
             {view.phase === 'playing' && (lyrics ? (
-              <Lyrics lyrics={lyrics} pos={getPos} prefs={prefs} variant="phone" parts={!!MODES[c.mode].parts} myPart={myPart} />
+              <Lyrics lyrics={lyrics} pos={getPos} prefs={prefs} variant="phone" parts={!!MODES[c.mode].parts} myPart={myPart} onPickLine={host && c.song.sources[0]?.kind !== 'house' && lyr.lyrics ? (i) => void doEmit('lyricOffset', { offset: Math.round((getPos() - lyr.lyrics!.lines[i].t) * 100) / 100 }) : undefined} />
             ) : <p className="empty" style={{ padding: 16 }}>{lyr.status === 'loading' ? 'Fetching lyrics…' : 'No synced lyrics for this song; follow the words on the stage screen.'}</p>)}
             {view.phase === 'playing' && <div style={{ padding: '0 16px 14px' }}><TapeScrub pos={pos} total={c.song.duration} onSeek={host ? (s) => void doEmit('control', { action: 'seek', pos: s }) : undefined} /></div>}
             {view.phase === 'results' && (
@@ -448,7 +449,7 @@ export default function Room() {
                 <button className="icon-btn" onClick={() => setShowLyricOpts((v) => !v)} aria-pressed={showLyricOpts} aria-label="Lyric display options" style={{ marginLeft: 'auto' }}><Type size={16} /></button>
               </div>
             )}
-            {showLyricOpts && <div className="panel" style={{ margin: 12 }}><LyricSettings prefs={prefs} set={setPrefs} hasRoman={!!lyrics?.lines.some((l) => l.words.some((w) => w.roman))} hasTranslation={!!lyrics?.lines.some((l) => l.translation)} wordTimed={!!lyrics?.wordTimed} /></div>}
+            {showLyricOpts && <div className="panel" style={{ margin: 12 }}><LyricSettings prefs={prefs} set={setPrefs} hasRoman={!!lyrics?.lines.some((l) => l.words.some((w) => w.roman))} hasTranslation={canTranslate(c?.song ?? null, lyr.lyrics)} wordTimed={!!lyrics?.wordTimed} note={tr.note} /></div>}
           </>
         )}
         {host && c && (
@@ -466,9 +467,9 @@ export default function Room() {
             {view.phase === 'playing' && lyrics && !c.song.key.startsWith('hb:') && (
               <span className="offset">
                 Lyrics
-                <Key size="sm" onClick={() => doEmit('lyricOffset', { offset: c.lyricOffset - 0.25 })} aria-label="Lyrics earlier">−¼s</Key>
+                <Key size="sm" onClick={() => doEmit('lyricOffset', { offset: c.lyricOffset - 0.25 })} aria-label="Lyrics earlier">−0.25s</Key>
                 <span className="num">{c.lyricOffset.toFixed(2)}</span>
-                <Key size="sm" onClick={() => doEmit('lyricOffset', { offset: c.lyricOffset + 0.25 })} aria-label="Lyrics later">+¼s</Key>
+                <Key size="sm" onClick={() => doEmit('lyricOffset', { offset: c.lyricOffset + 0.25 })} aria-label="Lyrics later">+0.25s</Key>
                 <Key size="sm" onClick={() => lyr.lyrics?.lines[0] && doEmit('lyricOffset', { offset: Math.round((pos - lyr.lyrics.lines[0].t) * 100) / 100 })}>First line now</Key>
               </span>
             )}

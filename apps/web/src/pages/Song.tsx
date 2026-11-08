@@ -137,6 +137,7 @@ export default function Song() {
                   {src.kind === 'youtube' && <p>"{src.videoTitle}" from {src.channel}, played through YouTube's player.</p>}
                   {src.kind === 'house' && <p>Piano, bass and drums synthesised in your browser from the written melody and chords. {d.rights}</p>}
                   {src.kind === 'youtube' && src.label === 'original' && <p><b>This video includes the original vocals.</b> No karaoke version has been attached yet.</p>}
+                  {src.kind === 'youtube' && user && <button className="link-btn" onClick={async () => { if (!confirm('Remove this video from the song? It will not be attached again.')) return; try { await api(`/songs/${encodeURIComponent(s.key)}/sources/${src.videoId}/reject`, { method: 'POST' }); setMsg('Removed. Attach the right karaoke video below, or try auto-find again.'); await load(); } catch (x) { setMsg((x as Error).message); } }}>Wrong song? Remove this video</button>}
                 </div>
               </div>
             ))}

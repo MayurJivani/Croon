@@ -62,6 +62,19 @@ test('edits keep the song, other versions do not', async () => {
   assert.equal(songTitle('Alive'), 'Alive');
 });
 
+test('a video must be a karaoke take of this song by this artist', async () => {
+  const { videoMatches } = await import('../src/services/imports.ts');
+  assert.equal(videoMatches('ZAYN - Scripted | KARAOKE', 'The Mixed Genre', 'Scripted', 'ZAYN'), true);
+  assert.equal(videoMatches('Sour Diesel - ZAYN Karaoke 【With Guide Melody】 Instrumental', 'EdKara', 'Sour Diesel', 'ZAYN'), true);
+  assert.equal(videoMatches('Dusk Till Dawn Karaoke - Zayn ft. Sia', 'Sing King', 'Dusk Till Dawn (feat. Sia)', 'ZAYN'), true);
+  assert.equal(videoMatches('Fatal || ZAYN || karaoke', 'TRENDINGMUSIC.KARAOKE', 'Fatal', 'ZAYN'), true, 'names artist and title');
+  assert.equal(videoMatches('Fatal Karaoke | Saari Yaadein', 'Some Channel', 'Fatal', 'ZAYN'), false, 'no artist: refused');
+  assert.equal(videoMatches('dRuNk Instrumental', 'ZackyV', 'dRuNk', 'ZAYN'), false, 'no artist anywhere: refused');
+  assert.equal(videoMatches('Zayn-YOU WISH YOU KNEW-KARAOKE/Instrumentals [ACAPELLA]', 'Nepop_nep', 'You Wish You Knew', 'ZAYN'), false, 'vocals-only uploads are refused');
+  assert.equal(videoMatches('ZAYN - PILLOWTALK (Official Video)', 'ZAYN', 'PILLOWTALK', 'ZAYN'), false, 'not a karaoke take');
+  assert.equal(videoMatches('Tum Hi Ho Karaoke | Arijit Singh', 'Sur Karaoke', 'Tum Hi Ho', 'Arijit Singh, Mithoon'), true);
+});
+
 test('language is guessed from the script', () => {
   assert.equal(guessLanguage('Tum Hi Ho'), 'en'); // romanised Hindi cannot be told apart; editable later
   assert.equal(guessLanguage('तुम ही हो'), 'hi');

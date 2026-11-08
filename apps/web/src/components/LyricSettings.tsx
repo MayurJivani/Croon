@@ -2,7 +2,7 @@ import type { LyricPrefs } from '../lib/lyrics.ts';
 
 const STYLES: [LyricPrefs['style'], string][] = [['classic', 'Classic wipe'], ['word', 'Word by word'], ['line', 'Line'], ['cinematic', 'Cinematic'], ['dual', 'Two-line']];
 
-export function LyricSettings({ prefs, set, hasRoman, hasTranslation, wordTimed }: { prefs: LyricPrefs; set(p: Partial<LyricPrefs>): void; hasRoman: boolean; hasTranslation: boolean; wordTimed: boolean }) {
+export function LyricSettings({ prefs, set, hasRoman, hasTranslation, wordTimed, note }: { prefs: LyricPrefs; set(p: Partial<LyricPrefs>): void; hasRoman: boolean; hasTranslation: boolean; wordTimed: boolean; note?: string | null }) {
   return (
     <>
       <div>
@@ -24,6 +24,7 @@ export function LyricSettings({ prefs, set, hasRoman, hasTranslation, wordTimed 
       </div>
       {hasRoman && <label className="check"><input type="checkbox" checked={prefs.roman} onChange={(e) => set({ roman: e.target.checked })} /> Show romanisation</label>}
       {hasTranslation && <label className="check"><input type="checkbox" checked={prefs.translation} onChange={(e) => set({ translation: e.target.checked })} /> Show English translation</label>}
+      {hasTranslation && prefs.translation && note && <p className="field-hint">{note}</p>}
     </>
   );
 }

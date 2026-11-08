@@ -394,7 +394,8 @@ select:focus, input:focus, textarea:focus { outline: 3px solid var(--marigold); 
 .singing-now b { color: var(--text); }
 .you-sing { background: var(--marigold); color: var(--card-ink); font: 800 13px/1 var(--display); letter-spacing: 0.12em; text-transform: uppercase; padding: 10px 16px; display: flex; align-items: center; gap: 10px; }
 .host-deck { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--line); background: var(--shell-3); }
-.offset { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.offset { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.offset .key { text-transform: none; letter-spacing: 0.02em; }
 .tabs { display: flex; gap: 4px; background: var(--shell-2); padding: 4px; border-radius: 10px; }
 .tabs { overflow-x: auto; }
 .tabs button { flex: 1 0 auto; white-space: nowrap; padding: 0 10px; height: 40px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: 800 13px/1 var(--display); letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; }
@@ -574,3 +575,11 @@ div.tape-band { cursor: default; }
 .find-song .spine-band { background: var(--card-dim); }
 .import-job { display: flex; flex-direction: column; gap: 12px; }
 .import-job .stats { margin: 0; }
+
+.lyr-line.pickable { cursor: pointer; border-radius: 8px; }
+.lyr-line.pickable:hover { background: rgba(255, 240, 230, 0.05); }
+.lyr-line.pickable:focus-visible { outline-offset: 6px; }
+.sync-hint { text-align: center; font-size: 13px; color: var(--muted); padding: 10px 16px 0; }
+
+.link-btn { background: none; border: 0; padding: 4px 0; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font-size: 13px; }
+.link-btn:hover { color: var(--tomato); }

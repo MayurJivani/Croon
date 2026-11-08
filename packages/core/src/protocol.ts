@@ -11,7 +11,7 @@ export * from './labels.ts';
 /** Where a song's audio comes from. Every variant says plainly what the listener will hear. */
 export type Source =
   | { kind: 'house'; slug: string }
-  | { kind: 'youtube'; videoId: string; channel: string; videoTitle: string; label: 'karaoke' | 'instrumental' | 'original' }
+  | { kind: 'youtube'; videoId: string; channel: string; videoTitle: string; label: 'karaoke' | 'instrumental' | 'original'; lyricOffset?: number | null }
   | { kind: 'file'; fileId: string; name: string };
 
 
