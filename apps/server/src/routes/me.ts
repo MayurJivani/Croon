@@ -7,7 +7,7 @@ import { savePerformance, profileStats, globalBoard, weeklyBoard, songBoard } fr
 import { userByName } from '../services/users.ts';
 import { lyricsForSong } from '../realtime.ts';
 import { scoreFull, scoreLite, maxFrames, type Frame } from '../../../../packages/core/src/scoring.ts';
-import { targets } from '../../../../packages/core/src/lyrics.ts';
+import { targets, mapLyrics, type Anchor } from '../../../../packages/core/src/lyrics.ts';
 import { sql } from '../db/client.ts';
 
 export const meRouter = Router();
@@ -63,14 +63,15 @@ meRouter.delete('/me/playlists/:id/songs/:key', requireAuth, asyncH(async (req, 
 // ---- solo performances: scored on the server from pitch frames, never from a claimed number ----
 const frame = z.tuple([z.number().min(0).max(36_000), z.number().min(0).max(127).nullable()]);
 meRouter.post('/performances', json({ limit: '512kb' }), writeLimiter, validate(z.object({
-  songKey: key, mode: z.enum(['solo', 'challenge', 'blind']), frames: z.array(frame).max(20_000), lyricOffset: z.number().min(-30).max(30).default(0),
+  songKey: key, mode: z.enum(['solo', 'challenge', 'blind']), frames: z.array(frame).max(20_000), lyricAnchors: z.array(z.tuple([z.number().min(-60).max(36_000), z.number().min(-60).max(36_000)])).max(60).default([]),
 })), asyncH(async (req, res) => {
   const song = songMeta(req.body.songKey);
   if (!song) throw new HttpError(404, 'Song not found.');
   if (req.body.frames.length > maxFrames(Math.max(song.duration, 600))) throw new HttpError(400, 'Too many frames for this song.');
-  const lyrics = await lyricsForSong(song, null);
+  const raw = await lyricsForSong(song, null);
+  const lyrics = raw && req.body.lyricAnchors.length ? mapLyrics(raw, req.body.lyricAnchors as Anchor[]) : raw;
   if (!lyrics) throw new HttpError(400, 'This song has no timed lyrics to score against.');
-  const frames = (req.body.frames as Frame[]).map(([t, m]) => [t - req.body.lyricOffset, m] as Frame);
+  const frames = req.body.frames as Frame[];
   const ts = targets(lyrics);
   const score = lyrics.pitched && ts.length ? scoreFull(frames, ts) : scoreLite(frames, lyrics.lines);
   const seconds = Math.min(song.duration, frames.length ? frames[frames.length - 1][0] : 0);

@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto';
 import { sql } from '../db/client.ts';
 import { logger } from '../logger.ts';
-import { isUnwantedVersion, stripVersionSuffix, normalizeTitle } from '../utils/trackFilters.ts';
+import { isUnwantedVersion, stripVersionSuffix, stripAnyTrailingQualifier, normalizeTitle } from '../utils/trackFilters.ts';
 import { addExtraSong, catalogRaw, songMeta, addSourceToMemory, type Raw } from './catalog.ts';
 import { lyricsFor } from './lyrics.ts';
 import { searchKaraoke, searchAvailable, verifyVideo, QuotaError } from './youtube.ts';
@@ -153,11 +153,16 @@ export function videoMatches(videoTitle: string, channel: string, title: string,
   const t = normalizeTitle(videoTitle);
   if (!/\b(karaoke|instrumental|backing track|minus one|sing along|singalong)\b/.test(t)) return false;
   if (/\b(acapella|a cappella|acappella|vocals only|reaction|tutorial|lesson|slowed|sped up|nightcore|8d)\b/.test(t)) return false;
+  const has = (w: string) => new RegExp(`\\b${w}\\b`).test(t);
+  // "(Remastered 2007)", "(From 'Porgy & Bess')": qualifiers are not part of the song's name.
+  const words = normalizeTitle(stripAnyTrailingQualifier(stripVersionSuffix(title))).split(' ').filter((w) => w.length > 2).slice(0, 4);
+  if (!words.length || !words.every(has)) return false;
+  // A one-word title ("Fatal", "Ironic") matches far too many songs alone, so the artist must be named.
+  // Longer titles are specific enough; karaoke channels often credit singers where Deezer credits the composer.
+  if (words.length > 1) return true;
   const lead = normalizeTitle(artist.split(/,|&| feat| ft\b/i)[0]);
   const who = `${t} ${normalizeTitle(channel)}`;
-  if (lead && !lead.split(' ').filter((w) => w.length > 1).every((w) => new RegExp(`\\b${w}\\b`).test(who))) return false;
-  const words = normalizeTitle(stripVersionSuffix(title).replace(/\((feat|ft)[^)]*\)/gi, '')).split(' ').filter((w) => w.length > 2).slice(0, 4);
-  return words.every((w) => new RegExp(`\\b${w}\\b`).test(t));
+  return !!lead && lead.split(' ').filter((w) => w.length > 1).every((w) => new RegExp(`\\b${w}\\b`).test(who));
 }
 
 async function rejectedVideos(key: string) {

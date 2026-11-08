@@ -30,9 +30,9 @@ const lyricState = new Map<string, 'word' | 'line' | 'none'>();
 const lyricText = new Map<string, string>();
 
 export async function loadCatalogState() {
-  const rows = await sql<{ song_key: string; video_id: string; video_title: string; channel: string; label: YtSource['label']; lyric_offset: number | null; created_at: Date }[]>`select song_key, video_id, video_title, channel, label, lyric_offset, created_at from song_sources where not rejected order by created_at`;
+  const rows = await sql<{ song_key: string; video_id: string; video_title: string; channel: string; label: YtSource['label']; lyric_anchors: [number, number][] | null; created_at: Date }[]>`select song_key, video_id, video_title, channel, label, lyric_anchors, created_at from song_sources where not rejected order by created_at`;
   for (const r of await sql<{ song_key: string; video_id: string }[]>`select song_key, video_id from song_sources where rejected`) dropSourceFromMemory(r.song_key, r.video_id);
-  for (const r of rows) addSourceToMemory(r.song_key, { kind: 'youtube', videoId: r.video_id, videoTitle: r.video_title, channel: r.channel, label: r.label, lyricOffset: r.lyric_offset }, r.created_at);
+  for (const r of rows) addSourceToMemory(r.song_key, { kind: 'youtube', videoId: r.video_id, videoTitle: r.video_title, channel: r.channel, label: r.label, lyricAnchors: r.lyric_anchors }, r.created_at);
   const extras = await sql<{ data: Raw }[]>`select data from extra_songs order by created_at`;
   for (const e of extras) addExtraSong(e.data);
   const lyr = await sql<{ song_key: string; synced: string | null; plain: string | null; word_timed: boolean }[]>`select song_key, synced, plain, word_timed from lyrics_cache`;
@@ -50,7 +50,7 @@ export function addExtraSong(r: Raw) {
 export function addSourceToMemory(key: string, src: YtSource, at = new Date()) {
   const list = sources.get(key) ?? [];
   const had = list.find((s) => s.videoId === src.videoId);
-  if (had) had.lyricOffset = src.lyricOffset ?? had.lyricOffset;
+  if (had) had.lyricAnchors = src.lyricAnchors ?? had.lyricAnchors;
   else list.push(src);
   // Karaoke versions first, then instrumentals, then originals.
   const rank = { karaoke: 0, instrumental: 1, original: 2 };
@@ -77,14 +77,14 @@ export async function rejectSource(key: string, videoId: string, userId: string 
 }
 
 /** Saves how far a video's edit sits from the lyric timing, for everyone who plays it next. */
-export async function saveLyricOffset(key: string, videoId: string, offset: number, userId: string | null) {
+export async function saveLyricAnchors(key: string, videoId: string, anchors: [number, number][], userId: string | null) {
   const src = sources.get(key)?.find((s) => s.videoId === videoId);
   if (!src) return false;
-  const value = Math.round(offset * 100) / 100;
-  await sql`insert into song_sources (song_key, video_id, video_title, channel, label, added_by, lyric_offset)
-    values (${key}, ${videoId}, ${src.videoTitle}, ${src.channel}, ${src.label}, ${userId}, ${value})
-    on conflict (song_key, video_id) do update set lyric_offset = excluded.lyric_offset`;
-  src.lyricOffset = value;
+  const value = anchors.length ? anchors : null;
+  await sql`insert into song_sources (song_key, video_id, video_title, channel, label, added_by, lyric_anchors)
+    values (${key}, ${videoId}, ${src.videoTitle}, ${src.channel}, ${src.label}, ${userId}, ${value ? sql.json(value) : null})
+    on conflict (song_key, video_id) do update set lyric_anchors = excluded.lyric_anchors`;
+  src.lyricAnchors = value;
   return true;
 }
 

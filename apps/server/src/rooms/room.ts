@@ -5,7 +5,7 @@ import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypt
 import { addEntry, moveEntry, removeEntry, toggleVote, skipThreshold, type QueueEntry } from '../../../../packages/core/src/queue.ts';
 import { MODES, withParts, type ModeId } from '../../../../packages/core/src/modes.ts';
 import { stopped, play, pause, seek, positionAt } from '../../../../packages/core/src/timeline.ts';
-import { parseLrc, parseUltrastar, targets, type Lyrics } from '../../../../packages/core/src/lyrics.ts';
+import { parseLrc, parseUltrastar, targets, mapLyrics, type Anchor, type Lyrics } from '../../../../packages/core/src/lyrics.ts';
 import { scoreFull, scoreLite, maxFrames, type Frame, type Score } from '../../../../packages/core/src/scoring.ts';
 import { DEFAULT_SETTINGS, type Avatar, type Participant, type Performance, type Phase, type RoomSettings, type RoomView, type SongMeta } from '../../../../packages/core/src/protocol.ts';
 
@@ -20,7 +20,7 @@ export type RoomDeps = {
   lyrics(song: SongMeta, inline: string | null): Promise<Lyrics | null>;
   onPlay(songKey: string): void;
   /** The host nudged a video's lyric timing: remember it for the next time anyone plays it. */
-  onLyricOffset(songKey: string, videoId: string, offset: number): void;
+  onLyricAnchors(songKey: string, videoId: string, anchors: Anchor[]): void;
   onScored(r: { room: Room; pid: string; userId: string | null; name: string; song: SongMeta; mode: ModeId; score: Score; partnerUserId: string | null }): Promise<void>;
   broadcast(room: Room): void;
 };
@@ -302,7 +302,7 @@ export class Room {
       singers = [...this.participants.values()].filter((p) => p.role !== 'stage' && p.connected && !(this.kind === 'event' && p.role === 'host')).map((p) => p.pid);
     }
     this.current = {
-      entryId: e.id, song, mode: e.mode as ModeId, singers, timeline: stopped(0), lyricOffset: song.sources[0]?.kind === 'youtube' ? song.sources[0].lyricOffset ?? 0 : 0, lyricsText,
+      entryId: e.id, song, mode: e.mode as ModeId, singers, timeline: stopped(0), lyricAnchors: song.sources[0]?.kind === 'youtube' ? song.sources[0].lyricAnchors ?? [] : [], lyricsText,
       skipVotes: [], cheers: 0, scores: {}, result: null, frames: new Map(), timers: [], lyrics: null, awaitingFrames: new Set(),
     };
     this.phase = 'announce';
@@ -393,13 +393,15 @@ export class Room {
     this.resolving = true;
     try {
       const lyrics = c.lyrics ?? (await this.deps.lyrics(c.song, c.lyricsText ?? null));
-      const parted = lyrics && MODES[c.mode].parts ? withParts(lyrics) : lyrics;
+      // Targets move onto the video's timing, so frames are scored as the singer heard the song.
+      const timed = lyrics && c.lyricAnchors.length ? mapLyrics(lyrics, c.lyricAnchors) : lyrics;
+      const parted = timed && MODES[c.mode].parts ? withParts(timed) : timed;
       const partners = c.singers.map((p) => this.participants.get(p)?.userId ?? null);
       for (const [i, pid] of c.singers.entries()) {
         const fr = c.frames.get(pid);
         if (!fr || !parted || !fr.some((f) => f[1] !== null)) continue;
         const part = MODES[c.mode].parts ? i + 1 : 0;
-        const shifted = c.lyricOffset ? fr.map(([t, m]) => [t - c.lyricOffset, m] as Frame) : fr;
+        const shifted = fr;
         const ts = targets(parted, part);
         const score = parted.pitched && ts.length ? scoreFull(shifted, ts) : scoreLite(shifted, parted.lines.filter((l) => !part || !l.part || l.part === part));
         c.scores[pid] = score;
@@ -433,12 +435,12 @@ export class Room {
     }, 15_000);
   }
 
-  setLyricOffset(by: string, offset: number) {
+  setLyricAnchors(by: string, anchors: Anchor[]) {
     this.requireHost(by);
     if (!this.current) throw new RoomError('Nothing is playing.');
-    this.current.lyricOffset = Math.round(offset * 100) / 100;
+    this.current.lyricAnchors = anchors;
     const src = this.current.song.sources[0];
-    if (src?.kind === 'youtube') this.deps.onLyricOffset(this.current.song.key, src.videoId, this.current.lyricOffset);
+    if (src?.kind === 'youtube') this.deps.onLyricAnchors(this.current.song.key, src.videoId, anchors);
     this.changed();
   }
 
@@ -487,7 +489,7 @@ export class Room {
       }),
       phase: this.phase,
       current: c ? {
-        entryId: c.entryId, song: hide ? blind(c.song) : c.song, mode: c.mode, singers: c.singers, timeline: c.timeline, lyricOffset: c.lyricOffset,
+        entryId: c.entryId, song: hide ? blind(c.song) : c.song, mode: c.mode, singers: c.singers, timeline: c.timeline, lyricAnchors: c.lyricAnchors,
         lyricsText: c.lyricsText ?? null, skipVotes: c.skipVotes, cheers: c.cheers, scores: c.scores, result: c.result ?? null,
       } : null,
       board: [...this.board].map(([pid, b]) => ({ pid, name: this.participants.get(pid)?.name ?? 'Gone', avatar: this.participants.get(pid)?.avatar ?? { glyph: 'mic', color: '#f2e8dc' }, ...b })).sort((a, b) => b.best - a.best),

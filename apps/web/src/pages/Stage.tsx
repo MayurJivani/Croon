@@ -8,7 +8,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Maximize, Volume2 } from 'lucide-react';
 import { MODES, withParts } from '../../../../packages/core/src/modes.ts';
 import { positionAt } from '../../../../packages/core/src/timeline.ts';
-import { shiftLyrics, targets } from '../../../../packages/core/src/lyrics.ts';
+import { mapLyrics, targets } from '../../../../packages/core/src/lyrics.ts';
 import type { LiveMsg, Participant } from '../../../../packages/core/src/protocol.ts';
 import { useRoom } from '../lib/room.ts';
 import { useSongLyrics, DEFAULT_PREFS } from '../lib/lyrics.ts';
@@ -33,8 +33,8 @@ export default function Stage() {
   const lyr = useSongLyrics(c?.song ?? null, c?.lyricsText ?? null);
   const lyrics = useMemo(() => {
     if (!lyr.lyrics || !c) return null;
-    return shiftLyrics(MODES[c.mode].parts ? withParts(lyr.lyrics) : lyr.lyrics, c.lyricOffset);
-  }, [lyr.lyrics, c?.lyricOffset, c?.mode]); // eslint-disable-line react-hooks/exhaustive-deps
+    return mapLyrics(MODES[c.mode].parts ? withParts(lyr.lyrics) : lyr.lyrics, c.lyricAnchors);
+  }, [lyr.lyrics, c?.lyricAnchors, c?.mode]); // eslint-disable-line react-hooks/exhaustive-deps
   const ts = useMemo(() => (lyrics?.pitched ? targets(lyrics) : []), [lyrics]);
   const getPos = useGetter(() => (c ? positionAt(c.timeline, serverNow()) : 0));
   const progress = useRef<HTMLElement>(null);

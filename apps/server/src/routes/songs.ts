@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { asyncH, requireAuth, searchLimiter, validate, writeLimiter, roomLimiter, HttpError } from '../middleware/http.ts';
 import { discover, importTrack, autoFind, startArtistImport, getJob } from '../services/imports.ts';
-import { search, facets, songMeta, crate, CRATES, addSourceToMemory, playableKeys, catalogRaw, saveLyricOffset, rejectSource } from '../services/catalog.ts';
+import { search, facets, songMeta, crate, CRATES, addSourceToMemory, playableKeys, catalogRaw, saveLyricAnchors, rejectSource } from '../services/catalog.ts';
 import { lyricsFor, lookupLyrics } from '../services/lyrics.ts';
 import { verifyVideo, videoIdFrom, searchKaraoke, searchAvailable } from '../services/youtube.ts';
 import { homeShelves, songBoard, personalBest, weeklyBoard } from '../services/stats.ts';
@@ -123,9 +123,9 @@ songsRouter.post('/:key/sources/:videoId/reject', requireAuth, writeLimiter, asy
   res.json({ ok: true, song: songMeta(k) });
 }));
 
-songsRouter.post('/:key/sync', requireAuth, writeLimiter, validate(z.object({ videoId: z.string().regex(/^[A-Za-z0-9_-]{11}$/), offset: z.number().min(-120).max(120) })), asyncH(async (req, res) => {
+songsRouter.post('/:key/sync', requireAuth, writeLimiter, validate(z.object({ videoId: z.string().regex(/^[A-Za-z0-9_-]{11}$/), anchors: z.array(z.tuple([z.number().min(-60).max(36_000), z.number().min(-60).max(36_000)])).max(60) })), asyncH(async (req, res) => {
   const k = String(req.params.key);
-  if (!(await saveLyricOffset(k, req.body.videoId, req.body.offset, req.session.userId))) throw new HttpError(404, 'That video is not attached to this song.');
+  if (!(await saveLyricAnchors(k, req.body.videoId, req.body.anchors, req.session.userId))) throw new HttpError(404, 'That video is not attached to this song.');
   res.json({ ok: true, song: songMeta(k) });
 }));
 

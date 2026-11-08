@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AnimatePresence, motion } from 'motion/react';
 import { Play, Pause, SkipBack, SkipForward, Maximize, Minimize, Volume2, Mic, MicOff, RotateCcw, Rewind, FastForward, X } from 'lucide-react';
 import type { SongMeta } from '../../../../packages/core/src/protocol.ts';
-import { shiftLyrics, targets, lineAt } from '../../../../packages/core/src/lyrics.ts';
+import { mapLyrics, targets, lineAt, addAnchor, nudgeAnchors, type Anchor } from '../../../../packages/core/src/lyrics.ts';
 import { scoreFull, scoreLite, type Frame, type Score } from '../../../../packages/core/src/scoring.ts';
 import { useEngine, useMediaSession, useGetter } from '../lib/playback.ts';
 import { useSongLyrics, usePrefs, DEFAULT_PREFS, useTranslation, canTranslate, type LyricPrefs } from '../lib/lyrics.ts';
@@ -97,7 +97,7 @@ export default function Sing() {
   const stageRef = useRef<HTMLDivElement>(null);
   const [prefs, setPrefs] = usePrefs<LyricPrefs>('croon:lyric-prefs', DEFAULT_PREFS);
   const [ui, setUi] = usePrefs('croon:player', { bg: 'artwork' as Bg, volume: 0.9, guide: true });
-  const [offset, setOffset] = useState(0);
+  const [anchors, setAnchors] = useState<Anchor[]>([]);
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);
   const [full, setFull] = useState(false);
@@ -125,7 +125,7 @@ export default function Sing() {
   const lyr = useSongLyrics(song, inline);
   const { engine, duration, error } = useEngine(song, { videoEl, fileUrl, enabled: !!song });
   const tr = useTranslation(song, lyr.lyrics, prefs.translation && canTranslate(song, lyr.lyrics));
-  const lyrics = useMemo(() => (tr.lyrics ? shiftLyrics(tr.lyrics, offset) : null), [tr.lyrics, offset]);
+  const lyrics = useMemo(() => (tr.lyrics ? mapLyrics(tr.lyrics, anchors) : null), [tr.lyrics, anchors]);
   const ts = useMemo(() => (lyrics?.pitched ? targets(lyrics) : []), [lyrics]);
   const getPos = useGetter(() => (playingRef.current && engine ? engine.position() : posRef.current));
   const total = duration || song?.duration || 0;
@@ -154,18 +154,18 @@ export default function Sing() {
     if (!fr.some((f) => f[1] !== null)) return setResult({ score: { kind: 'lite', total: 0, pitch: null, timing: 0, stability: 0, completion: 0, consistency: 0, offsetMs: 0, grade: 'D' }, best: null, isBest: false, saved: false });
     if (song.key.startsWith('hb:') || song.key.startsWith('dz:')) {
       try {
-        const r = await api<{ score: Score; personalBest: number | null; isBest: boolean; saved: boolean }>('/performances', { method: 'POST', body: { songKey: song.key, mode, frames: fr, lyricOffset: offset } });
+        const r = await api<{ score: Score; personalBest: number | null; isBest: boolean; saved: boolean }>('/performances', { method: 'POST', body: { songKey: song.key, mode, frames: fr, lyricAnchors: anchors } });
         setResult({ score: r.score, best: r.personalBest, isBest: r.isBest, saved: r.saved });
       } catch (e) {
         setErr((e as Error).message);
       }
     } else {
       // A guest's own file is scored here and not saved: there is no catalogue song to rank it against.
-      const shifted = fr.map(([t, m]) => [t - offset, m] as Frame);
-      const tt = targets(lyr.lyrics);
-      setResult({ score: lyr.lyrics.pitched && tt.length ? scoreFull(shifted, tt) : scoreLite(shifted, lyr.lyrics.lines), best: null, isBest: false, saved: false });
+      const timed = mapLyrics(lyr.lyrics, anchors);
+      const tt = targets(timed);
+      setResult({ score: timed.pitched && tt.length ? scoreFull(fr, tt) : scoreLite(fr, timed.lines), best: null, isBest: false, saved: false });
     }
-  }, [scoring, song, lyr.lyrics, mode, offset]);
+  }, [scoring, song, lyr.lyrics, mode, anchors]);
 
   useEffect(() => {
     if (!engine) return;
@@ -180,17 +180,19 @@ export default function Sing() {
       }
     };
   }, [engine, finish]);
-  const savedOffset = song?.sources[0]?.kind === 'youtube' ? song.sources[0].lyricOffset ?? 0 : 0;
-  useEffect(() => setOffset(savedOffset), [song?.key, savedOffset]);
+  const saved = useMemo<Anchor[]>(() => (song?.sources[0]?.kind === 'youtube' ? song.sources[0].lyricAnchors ?? [] : []), [song]);
+  useEffect(() => setAnchors(saved), [song?.key, saved]);
+  const changed = JSON.stringify(anchors) !== JSON.stringify(saved);
+  // Each tap pins a lyric line to the moment it is sung; lines between taps stretch to fit.
   const pickLine = (i: number) => {
     const line = lyr.lyrics?.lines[i];
-    if (line) setOffset(Math.round((getPos() - line.t) * 100) / 100);
+    if (line) setAnchors((a) => addAnchor(a, line.t, getPos()));
   };
   const saveTiming = async () => {
     const src = song?.sources[0];
     if (!song || src?.kind !== 'youtube') return;
     try {
-      const r = await api<{ song: SongMeta }>(`/songs/${encodeURIComponent(song.key)}/sync`, { method: 'POST', body: { videoId: src.videoId, offset } });
+      const r = await api<{ song: SongMeta }>(`/songs/${encodeURIComponent(song.key)}/sync`, { method: 'POST', body: { videoId: src.videoId, anchors } });
       setSong(r.song);
       setErr(null);
     } catch (e) {
@@ -369,14 +371,15 @@ export default function Sing() {
             <div>
               <h3>Lyric timing</h3>
               <div className="offset">
-                <Key size="sm" onClick={() => setOffset((o) => Math.round((o - 0.25) * 100) / 100)} aria-label="Lyrics earlier">−0.25s</Key>
-                <span className="num" style={{ minWidth: 60, textAlign: 'center' }}>{offset > 0 ? '+' : ''}{offset.toFixed(2)}s</span>
-                <Key size="sm" onClick={() => setOffset((o) => Math.round((o + 0.25) * 100) / 100)} aria-label="Lyrics later">+0.25s</Key>
-                <Key size="sm" onClick={() => lyr.lyrics?.lines[0] && setOffset(Math.round((pos - lyr.lyrics.lines[0].t) * 100) / 100)} title="Press when the first line starts">First line now</Key>
+                <Key size="sm" onClick={() => setAnchors((a) => nudgeAnchors(a, -0.25))} aria-label="Lyrics earlier">−0.25s</Key>
+                <span className="num" style={{ minWidth: 80, textAlign: 'center' }}>{anchors.length ? `${anchors.length} sync point${anchors.length > 1 ? 's' : ''}` : 'As timed'}</span>
+                <Key size="sm" onClick={() => setAnchors((a) => nudgeAnchors(a, 0.25))} aria-label="Lyrics later">+0.25s</Key>
+                <Key size="sm" onClick={() => lyr.lyrics?.lines[0] && setAnchors((a) => addAnchor(a, lyr.lyrics!.lines[0].t, getPos()))} title="Press when the first line starts">First line now</Key>
+                {anchors.length > 0 && <Key size="sm" tone="ghost" onClick={() => setAnchors([])}>Reset</Key>}
               </div>
-              <p className="field-hint" style={{ marginTop: 6 }}>Karaoke videos are often a different edit from the recording the lyrics were timed to. Tap a lyric line as it is sung, or nudge here.</p>
-              {isVideo && user && offset !== savedOffset && <Key size="sm" tone="hot" onClick={saveTiming} style={{ marginTop: 8 }}>Save this timing for everyone</Key>}
-              {isVideo && savedOffset !== 0 && offset === savedOffset && <p className="field-hint">Using timing saved by an earlier singer.</p>}
+              <p className="field-hint" style={{ marginTop: 6 }}>Karaoke videos are often a different edit, with a longer or shorter intro and sections cut. Tap a lyric line as it is sung: the first tap fixes the intro, a few more through the song keep it in step.</p>
+              {isVideo && user && changed && <Key size="sm" tone="hot" onClick={saveTiming} style={{ marginTop: 8 }}>Save this timing for everyone</Key>}
+              {isVideo && saved.length > 0 && !changed && <p className="field-hint">Using timing saved by an earlier singer.</p>}
             </div>
           )}
           {lyr.credit && <p className="field-hint">{lyr.credit}</p>}

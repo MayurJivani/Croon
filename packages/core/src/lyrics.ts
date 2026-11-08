@@ -167,6 +167,57 @@ export function lineAt(lyrics: Lyrics, t: number): number {
 /** 0..1 through a word at time t. */
 export const wordProgress = (w: Word, t: number) => (t <= w.t ? 0 : t >= w.t + w.d ? 1 : (t - w.t) / w.d);
 
+/**
+ * Sync points pin lyric times to media times: [when the lyrics say a line starts, when this video
+ * sings it]. One point is a plain offset. Two or more stretch the lyrics between them, which absorbs
+ * karaoke edits that run at a slightly different speed or cut and extend sections.
+ */
+export type Anchor = [lyricT: number, mediaT: number];
+
+/** A function from lyric time to media time through the sync points. */
+export function timeMap(anchors: Anchor[]): (t: number) => number {
+  const a = [...anchors].sort((x, y) => x[0] - y[0]);
+  if (!a.length) return (t) => t;
+  const first = a[0], last = a[a.length - 1];
+  return (t) => {
+    // Before the first and after the last point the song runs at normal speed.
+    if (a.length === 1 || t <= first[0]) return t + (first[1] - first[0]);
+    if (t >= last[0]) return t + (last[1] - last[0]);
+    const i = a.findIndex((p) => p[0] > t);
+    const [x0, y0] = a[i - 1], [x1, y1] = a[i];
+    const slope = Math.max(0.25, Math.min(4, (y1 - y0) / (x1 - x0)));
+    return y0 + (t - x0) * slope;
+  };
+}
+
+/** The lyrics as this media plays them. */
+export function mapLyrics(l: Lyrics, anchors: Anchor[]): Lyrics {
+  if (!anchors.length) return l;
+  const f = timeMap(anchors);
+  const span = (t: number, d: number) => ({ t: f(t), d: Math.max(0.05, f(t + d) - f(t)) });
+  return {
+    ...l,
+    lines: l.lines.map((ln) => ({
+      ...ln, t: f(ln.t), end: f(ln.end),
+      words: ln.words.map((w) => ({ ...w, ...span(w.t, w.d), notes: w.notes?.map((n) => ({ ...n, ...span(n.t, n.d) })) })),
+    })),
+  };
+}
+
+/**
+ * Adds a sync point. Points within three seconds of it (in lyric time) are replaced, and any that
+ * would make time run backwards against it are dropped, so a careless tap cannot tangle the map.
+ */
+export function addAnchor(anchors: Anchor[], lyricT: number, mediaT: number): Anchor[] {
+  const keep = anchors.filter(([x, y]) => Math.abs(x - lyricT) >= 3 && (x < lyricT ? y < mediaT : y > mediaT));
+  const r = (n: number) => Math.round(n * 100) / 100;
+  return [...keep, [r(lyricT), r(mediaT)] as Anchor].sort((a, b) => a[0] - b[0]).slice(-60);
+}
+
+/** Moves every sync point by `by` seconds (the plus and minus nudge); with none, makes one. */
+export const nudgeAnchors = (anchors: Anchor[], by: number): Anchor[] =>
+  anchors.length ? anchors.map(([x, y]) => [x, Math.round((y + by) * 100) / 100] as Anchor) : [[0, Math.round(by * 100) / 100]];
+
 /** Shifts every time by `by` seconds (positive = later). Used for the per-song lyric offset nudge. */
 export function shiftLyrics(l: Lyrics, by: number): Lyrics {
   if (!by) return l;

@@ -69,7 +69,9 @@ test('a video must be a karaoke take of this song by this artist', async () => {
   assert.equal(videoMatches('Dusk Till Dawn Karaoke - Zayn ft. Sia', 'Sing King', 'Dusk Till Dawn (feat. Sia)', 'ZAYN'), true);
   assert.equal(videoMatches('Fatal || ZAYN || karaoke', 'TRENDINGMUSIC.KARAOKE', 'Fatal', 'ZAYN'), true, 'names artist and title');
   assert.equal(videoMatches('Fatal Karaoke | Saari Yaadein', 'Some Channel', 'Fatal', 'ZAYN'), false, 'no artist: refused');
-  assert.equal(videoMatches('dRuNk Instrumental', 'ZackyV', 'dRuNk', 'ZAYN'), false, 'no artist anywhere: refused');
+  assert.equal(videoMatches('dRuNk Instrumental', 'ZackyV', 'dRuNk', 'ZAYN'), false, 'one-word title and no artist: refused');
+  assert.equal(videoMatches('With or Without You (KARAOKE) | U2', 'Sing King', 'With Or Without You (Remastered 2007)', 'U2'), true, 'qualifiers on the catalogue title are ignored');
+  assert.equal(videoMatches('San Sanana - KARAOKE - Asoka 2001', 'Sur', 'San Sanana', 'Anu Malik'), true, 'a specific title needs no artist (composer credits differ)');
   assert.equal(videoMatches('Zayn-YOU WISH YOU KNEW-KARAOKE/Instrumentals [ACAPELLA]', 'Nepop_nep', 'You Wish You Knew', 'ZAYN'), false, 'vocals-only uploads are refused');
   assert.equal(videoMatches('ZAYN - PILLOWTALK (Official Video)', 'ZAYN', 'PILLOWTALK', 'ZAYN'), false, 'not a karaoke take');
   assert.equal(videoMatches('Tum Hi Ho Karaoke | Arijit Singh', 'Sur Karaoke', 'Tum Hi Ho', 'Arijit Singh, Mithoon'), true);

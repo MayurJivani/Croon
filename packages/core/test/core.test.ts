@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLrc, parseUltrastar, lineAt, lineText, targets, shiftLyrics } from '../src/lyrics.ts';
+import { parseLrc, parseUltrastar, lineAt, lineText, targets, shiftLyrics, timeMap, mapLyrics, addAnchor, nudgeAnchors } from '../src/lyrics.ts';
 import { HOUSE_BAND, compile } from '../src/houseband.ts';
 import { positionAt, play, pause, seek, clockOffset, correction, stopped } from '../src/timeline.ts';
 import { addEntry, toggleVote, roundOf, moveEntry, skipThreshold, type QueueEntry } from '../src/queue.ts';
@@ -141,4 +141,26 @@ test('romanisation reads the way lyric sheets are written', () => {
   assert.equal(romanize('Already Latin'), 'Already Latin');
   assert.equal(needsRoman('Tum hi ho'), false);
   assert.equal(romanize('君の名は'), '君no名ha', 'kanji pass through, kana around them still romanise');
+});
+
+test('sync points: one is an offset, two stretch, bad taps cannot tangle the map', () => {
+  assert.equal(timeMap([])(10), 10);
+  assert.equal(timeMap([[60, 24]])(100), 64, 'a single point is a plain offset (a shorter intro)');
+  const f = timeMap([[60, 24], [160, 134]]);
+  assert.equal(f(110), 79, 'between points the lyrics stretch to fit the edit');
+  assert.equal(f(200), 174, 'after the last point it runs at normal speed from there');
+  assert.equal(f(30), -6, 'before the first point too');
+  let a = addAnchor([], 60, 24);
+  a = addAnchor(a, 160, 134);
+  a = addAnchor(a, 161, 140);
+  assert.deepEqual(a, [[60, 24], [161, 140]], 'a tap near an existing point replaces it');
+  a = addAnchor(a, 100, 150);
+  assert.deepEqual(a, [[60, 24], [100, 150]], 'a point that would run time backwards drops the conflicting one');
+  assert.deepEqual(nudgeAnchors([[60, 24]], -0.25), [[60, 23.75]]);
+  assert.deepEqual(nudgeAnchors([], 1), [[0, 1]]);
+  const l = parseLrc('[01:00.00]First\n[02:40.00]Second\n[03:00.00]', 200);
+  const m = mapLyrics(l, [[60, 24], [160, 134]]);
+  assert.equal(m.lines[0].t, 24);
+  assert.equal(m.lines[1].t, 134);
+  assert.equal(m.lines[0].end, 134);
 });

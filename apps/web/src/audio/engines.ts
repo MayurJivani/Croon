@@ -314,12 +314,27 @@ export class YouTubeEngine implements Engine {
       this.player = new window.YT!.Player(host, {
         videoId: this.videoId,
         host: 'https://www.youtube-nocookie.com',
-        playerVars: { controls: 0, disablekb: 1, rel: 0, playsinline: 1, iv_load_policy: 3, modestbranding: 1, fs: 0 },
+        // cc_load_policy 0 plus unloading the captions module keeps auto-captions ([Music], [Applause]) off the karaoke video.
+        playerVars: { controls: 0, disablekb: 1, rel: 0, playsinline: 1, iv_load_policy: 3, modestbranding: 1, fs: 0, cc_load_policy: 0 },
         events: {
-          onReady: () => resolve(),
+          onReady: () => {
+            try {
+              (this.player as unknown as { unloadModule(m: string): void }).unloadModule('captions');
+            } catch {
+              /* older players have no captions module to unload */
+            }
+            resolve();
+          },
           onError: (e: { data: number }) => reject(new Error(e.data === 101 || e.data === 150 ? 'The owner of this video does not allow it to play here.' : 'This video could not be played.')),
           onStateChange: (e: { data: number }) => {
             if (e.data === 0) this.onEnded?.();
+            if (e.data === 1) {
+              try {
+                (this.player as unknown as { unloadModule(m: string): void }).unloadModule('captions');
+              } catch {
+                /* nothing to unload */
+              }
+            }
             const wasPlaying = this.last.playing;
             this.last = { t: this.player!.getCurrentTime(), at: performance.now(), playing: e.data === 1 };
             // 1 playing, 2 paused. Buffering (3) keeps the last state so the clock does not stutter.

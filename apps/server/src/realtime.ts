@@ -6,7 +6,7 @@ import { Server, type Socket } from 'socket.io';
 import { C2S, type C2SEvent } from '../../../packages/core/src/protocol.ts';
 import { parseLrc, parseUltrastar, type Lyrics } from '../../../packages/core/src/lyrics.ts';
 import { Room, RoomError, newRoomCode, realClock, type Clock, type RoomDeps } from './rooms/room.ts';
-import { songMeta, houseCompiled, playableKeys, saveLyricOffset } from './services/catalog.ts';
+import { songMeta, houseCompiled, playableKeys, saveLyricAnchors } from './services/catalog.ts';
 import { lyricsFor } from './services/lyrics.ts';
 import { savePerformance, recordPlay } from './services/stats.ts';
 import { sessionFromToken, COOKIE } from './auth/session.ts';
@@ -50,7 +50,7 @@ export function createRoom(o: { name: string; description?: string; kind: 'party
     },
     lyrics: (song, inline) => lyricsForSong(song, inline),
     onPlay: (key) => void recordPlay(key).catch(() => {}),
-    onLyricOffset: (key, videoId, offset) => void saveLyricOffset(key, videoId, offset, null).catch(() => {}),
+    onLyricAnchors: (key, videoId, anchors) => void saveLyricAnchors(key, videoId, anchors, null).catch(() => {}),
     onScored: async (r) => {
       // Party guests' scores live and die with the room; signed-in singers and event entries are kept.
       if (!r.userId && r.room.kind !== 'event') return;
@@ -184,7 +184,7 @@ export function attachRealtime(http: HttpServer) {
     on('queueRemove', (d) => r().queueRemove(p(), d.id));
     on('queueMove', (d) => r().queueMove(p(), d.id, d.to));
     on('control', (d) => r().control(p(), d.action, d.pos));
-    on('lyricOffset', (d) => r().setLyricOffset(p(), d.offset));
+    on('lyricAnchors', (d) => r().setLyricAnchors(p(), d.anchors));
     on('skipVote', () => r().skipVote(p()));
     on('cheer', () => r().cheer(p()));
     on('settings', (d) => r().updateSettings(p(), d));

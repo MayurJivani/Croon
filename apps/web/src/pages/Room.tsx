@@ -8,7 +8,7 @@ import { AVATAR_COLORS, AVATAR_GLYPHS } from '../../../../packages/core/src/labe
 import type { Avatar as AvatarT, Participant, RoomView, SongMeta } from '../../../../packages/core/src/protocol.ts';
 import { MODES, withParts, type ModeId } from '../../../../packages/core/src/modes.ts';
 import { positionAt } from '../../../../packages/core/src/timeline.ts';
-import { shiftLyrics } from '../../../../packages/core/src/lyrics.ts';
+import { mapLyrics, addAnchor, nudgeAnchors } from '../../../../packages/core/src/lyrics.ts';
 import type { Frame } from '../../../../packages/core/src/scoring.ts';
 import { useRoom, roomToken, type Reply } from '../lib/room.ts';
 import { useSongLyrics, usePrefs, DEFAULT_PREFS, useTranslation, canTranslate, type LyricPrefs } from '../lib/lyrics.ts';
@@ -351,8 +351,8 @@ export default function Room() {
   const lyrics = useMemo(() => {
     if (!tr.lyrics || !c) return null;
     const l = MODES[c.mode].parts ? withParts(tr.lyrics) : tr.lyrics;
-    return shiftLyrics(l, c.lyricOffset);
-  }, [tr.lyrics, c?.lyricOffset, c?.mode]); // eslint-disable-line react-hooks/exhaustive-deps
+    return mapLyrics(l, c.lyricAnchors);
+  }, [tr.lyrics, c?.lyricAnchors, c?.mode]); // eslint-disable-line react-hooks/exhaustive-deps
   const getPos = useGetter(() => (c ? positionAt(c.timeline, serverNow()) : 0));
   const [pos, setPos] = useState(0);
   useEffect(() => {
@@ -432,7 +432,7 @@ export default function Room() {
             {iPlayAudio && <RoomAudio view={view} serverNow={serverNow} emit={emit} stage={false} />}
             {view.phase === 'announce' && <Spotlight singers={singers} song={c.song} mode={c.mode} />}
             {view.phase === 'playing' && (lyrics ? (
-              <Lyrics lyrics={lyrics} pos={getPos} prefs={prefs} variant="phone" parts={!!MODES[c.mode].parts} myPart={myPart} onPickLine={host && c.song.sources[0]?.kind !== 'house' && lyr.lyrics ? (i) => void doEmit('lyricOffset', { offset: Math.round((getPos() - lyr.lyrics!.lines[i].t) * 100) / 100 }) : undefined} />
+              <Lyrics lyrics={lyrics} pos={getPos} prefs={prefs} variant="phone" parts={!!MODES[c.mode].parts} myPart={myPart} onPickLine={host && c.song.sources[0]?.kind !== 'house' && lyr.lyrics ? (i) => void doEmit('lyricAnchors', { anchors: addAnchor(c.lyricAnchors, lyr.lyrics!.lines[i].t, getPos()) }) : undefined} />
             ) : <p className="empty" style={{ padding: 16 }}>{lyr.status === 'loading' ? 'Fetching lyrics…' : 'No synced lyrics for this song; follow the words on the stage screen.'}</p>)}
             {view.phase === 'playing' && <div style={{ padding: '0 16px 14px' }}><TapeScrub pos={pos} total={c.song.duration} onSeek={host ? (s) => void doEmit('control', { action: 'seek', pos: s }) : undefined} /></div>}
             {view.phase === 'results' && (
@@ -467,10 +467,10 @@ export default function Room() {
             {view.phase === 'playing' && lyrics && !c.song.key.startsWith('hb:') && (
               <span className="offset">
                 Lyrics
-                <Key size="sm" onClick={() => doEmit('lyricOffset', { offset: c.lyricOffset - 0.25 })} aria-label="Lyrics earlier">−0.25s</Key>
-                <span className="num">{c.lyricOffset.toFixed(2)}</span>
-                <Key size="sm" onClick={() => doEmit('lyricOffset', { offset: c.lyricOffset + 0.25 })} aria-label="Lyrics later">+0.25s</Key>
-                <Key size="sm" onClick={() => lyr.lyrics?.lines[0] && doEmit('lyricOffset', { offset: Math.round((pos - lyr.lyrics.lines[0].t) * 100) / 100 })}>First line now</Key>
+                <Key size="sm" onClick={() => doEmit('lyricAnchors', { anchors: nudgeAnchors(c.lyricAnchors, -0.25) })} aria-label="Lyrics earlier">−0.25s</Key>
+                <span className="num">{c.lyricAnchors.length ? `${c.lyricAnchors.length} sync pts` : 'As timed'}</span>
+                <Key size="sm" onClick={() => doEmit('lyricAnchors', { anchors: nudgeAnchors(c.lyricAnchors, 0.25) })} aria-label="Lyrics later">+0.25s</Key>
+                <Key size="sm" onClick={() => lyr.lyrics?.lines[0] && doEmit('lyricAnchors', { anchors: addAnchor(c.lyricAnchors, lyr.lyrics.lines[0].t, getPos()) })}>First line now</Key>
               </span>
             )}
           </div>
