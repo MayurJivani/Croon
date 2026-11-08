@@ -1,0 +1,31 @@
+{
+  "name": "@croon/server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "NODE_ENV=development node --env-file-if-exists=../../.env --watch src/index.ts",
+    "start": "node src/db/migrate.ts && node src/index.ts",
+    "migrate": "node --env-file-if-exists=../../.env src/db/migrate.ts",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "cookie-parser": "^1.4.7",
+    "csrf-csrf": "^4.1.0",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.3",
+    "helmet": "^8.3.0",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0",
+    "postgres": "^4.1.0",
+    "socket.io": "^4.8.4",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/cookie-parser": "^1.4.10",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.6",
+    "pino-pretty": "^13.2.0",
+    "socket.io-client": "^4.8.4"
+  }
+}

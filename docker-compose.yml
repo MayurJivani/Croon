@@ -1,0 +1,19 @@
+# Local Postgres for development:  docker compose up -d db
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: croon
+      POSTGRES_PASSWORD: croon
+      POSTGRES_DB: croon
+    ports:
+      - "127.0.0.1:5442:5432"
+    volumes:
+      - croon-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U croon"]
+      interval: 3s
+      retries: 20
+volumes:
+  croon-db:

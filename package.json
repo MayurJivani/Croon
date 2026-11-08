@@ -1,0 +1,27 @@
+{
+  "name": "croon",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "workspaces": [
+    "apps/server",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c blue,green \"npm run dev -w apps/server\" \"npm run dev -w apps/web\"",
+    "build": "npm run build -w apps/web",
+    "start": "npm run start -w apps/server",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "oxlint --deny-warnings apps packages",
+    "test": "node --test \"packages/core/test/*.test.ts\" \"apps/server/test/*.test.ts\"",
+    "db:up": "docker compose up -d db"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.7",
+    "typescript": "^7.0.2",
+    "oxlint": "^1.92.0"
+  }
+}
