@@ -27,7 +27,8 @@ async function issue(req: Request, res: Response, userId: string | null): Promis
   const token = randomBytes(32).toString('hex');
   const id = digest(token);
   await sql`insert into sessions (id, user_id, expires_at) values (${id}, ${userId}, ${new Date(Date.now() + TTL_MS)})`;
-  res.cookie(COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: isHttps(req), path: '/', maxAge: TTL_MS });
+  // Production sits behind Cloudflare, which always serves https, and the __Host- prefix requires Secure.
+  res.cookie(COOKIE, token, { httpOnly: true, sameSite: 'lax', secure: env.NODE_ENV === 'production' || isHttps(req), path: '/', maxAge: TTL_MS });
   return { id, userId };
 }
 

@@ -9,7 +9,7 @@ import type { SongMeta, Source } from '../../../../packages/core/src/protocol.ts
 import { sql } from '../db/client.ts';
 import { logger } from '../logger.ts';
 
-type Raw = { id: string; title: string; artist: string; featured?: string[]; album: string | null; year: number | null; genre: string; language: string; region: string | null; scene: string; artwork: string | null; duration: number; difficulty: number | null; rank: number };
+export type Raw = { id: string; title: string; artist: string; featured?: string[]; album: string | null; year: number | null; genre: string; language: string; region: string | null; scene: string; artwork: string | null; duration: number; difficulty: number | null; rank: number };
 type YtSource = Extract<Source, { kind: 'youtube' }>;
 
 const DATA = new URL('../../../../data/', import.meta.url);
@@ -32,9 +32,18 @@ const lyricText = new Map<string, string>();
 export async function loadCatalogState() {
   const rows = await sql<{ song_key: string; video_id: string; video_title: string; channel: string; label: YtSource['label']; created_at: Date }[]>`select song_key, video_id, video_title, channel, label, created_at from song_sources order by created_at`;
   for (const r of rows) addSourceToMemory(r.song_key, { kind: 'youtube', videoId: r.video_id, videoTitle: r.video_title, channel: r.channel, label: r.label }, r.created_at);
+  const extras = await sql<{ data: Raw }[]>`select data from extra_songs order by created_at`;
+  for (const e of extras) addExtraSong(e.data);
   const lyr = await sql<{ song_key: string; synced: string | null; plain: string | null; word_timed: boolean }[]>`select song_key, synced, plain, word_timed from lyrics_cache`;
   for (const r of lyr) noteLyrics(r.song_key, r.synced, r.plain, r.word_timed);
   logger.info({ songs: raw.length + house.length, playable: sources.size + house.length, lyrics: lyr.length }, 'catalogue loaded');
+}
+
+/** A song imported from Deezer joins the in-memory catalogue alongside the bundled ones. */
+export function addExtraSong(r: Raw) {
+  if (byId.has(r.id)) return;
+  raw.push(r);
+  byId.set(r.id, r);
 }
 
 export function addSourceToMemory(key: string, src: YtSource, at = new Date()) {
@@ -163,6 +172,7 @@ export const CRATES = [
   { id: 'nostalgia', name: 'Nostalgia trip', blurb: 'The songs your parents sang.', test: (k: string) => ['nostalgia', 'bollywood-classics'].includes(catalogRaw(k)?.scene ?? '') },
   { id: 'soundtracks', name: 'Movie soundtracks', blurb: 'From the big screen to the living room.', test: (k: string) => catalogRaw(k)?.scene === 'soundtracks' },
   { id: 'south', name: 'South Indian hits', blurb: 'Tamil film favourites.', test: (k: string) => catalogRaw(k)?.scene === 'south-indian' },
+  { id: 'imported', name: 'Freshly imported', blurb: 'Songs and whole discographies people brought in from Deezer.', test: (k: string) => catalogRaw(k)?.scene === 'imported' },
   { id: 'hiphop', name: 'Bars only', blurb: 'Hip-hop and desi rap for fast tongues.', test: (k: string) => ['hip-hop', 'desi-hiphop'].includes(catalogRaw(k)?.scene ?? '') },
 ];
 

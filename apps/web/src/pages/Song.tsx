@@ -7,6 +7,8 @@ import { api } from '../lib/api.ts';
 import { useSession } from '../lib/session.tsx';
 import { lastRoom } from './Rooms.tsx';
 import { queueSolo } from './Sing.tsx';
+import { describeFind } from '../components/FindAnySong.tsx';
+import { Wand2, ExternalLink } from 'lucide-react';
 
 type Detail = { song: SongMeta; rights: string | null; board: { username: string; display_name: string; avatar: { glyph: string; color: string }; total: number; kind: string }[]; personalBest: number | null; favorite: boolean; canSearchVideos: boolean };
 type Yt = Extract<Source, { kind: 'youtube' }>;
@@ -61,6 +63,16 @@ export default function Song() {
       const r = await api<{ source: Yt }>(`/songs/${encodeURIComponent(s.key)}/sources`, { method: 'POST', body: { url: link } });
       setUrl('');
       setMsg(`Attached "${r.source.videoTitle}" from ${r.source.channel}.${r.source.label === 'original' ? ' It looks like the original recording with vocals, and will be labelled that way.' : ''}`);
+      await load();
+    } catch (x) {
+      setMsg((x as Error).message);
+    }
+  };
+  const autoFind = async () => {
+    setMsg('Looking for lyrics and a karaoke video…');
+    try {
+      const r = await api<{ found: { lyrics: 'word' | 'line' | 'none'; video: string } }>(`/songs/${encodeURIComponent(s.key)}/autofind`, { method: 'POST' });
+      setMsg(describeFind(r.found));
       await load();
     } catch (x) {
       setMsg((x as Error).message);
@@ -128,6 +140,12 @@ export default function Song() {
                 </div>
               </div>
             ))}
+            {!s.sources.length && user && s.key.startsWith('dz:') && (
+              <div className="row">
+                <Key tone="hot" onClick={autoFind} icon={<Wand2 size={16} />}>Auto-find lyrics and karaoke track</Key>
+                <a className="key key-ghost key-md" href={`https://www.youtube.com/results?${new URLSearchParams({ search_query: `${s.title} ${s.artist} karaoke` })}`} target="_blank" rel="noopener noreferrer"><ExternalLink size={16} aria-hidden /><span>Search on YouTube</span></a>
+              </div>
+            )}
             {!s.sources.length && <p className="notice"><b>No karaoke track yet.</b> Croon will not play the original recording and pretend it is an instrumental. Attach a karaoke or instrumental video below and it becomes playable for everyone.</p>}
           </div>
           {s.key.startsWith('dz:') && (user ? (

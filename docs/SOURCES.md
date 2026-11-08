@@ -14,6 +14,7 @@ plays sources that come with their own permission to play.
 | **YouTube oEmbed** | Confirms a pasted video exists and allows embedding (it answers 401 when the owner disabled embedding) | No key. Only a validated 11-character video id comes from the client. | Free |
 | **The user's own files** | Any audio the user has the right to play, plus LRC or UltraStar lyrics | In solo mode the file never leaves the device. In a room it is held in that room's memory for the night so the stage can play it, then deleted. | Free |
 | **LRCLIB** (`lrclib.net`) | Community-made synced lyrics (LRC, mostly line-timed, a few word-timed) | Keyless and free, asks for an identifying User-Agent. LRCLIB does not license the lyrics themselves: Croon fetches on demand, caches per song, and never exports them in bulk. A commercial launch should move to a licensed lyrics provider (below). | Free |
+| **Deezer API** (imports) | Search and full discographies: titles, albums, years, genres, artwork, durations | Public and keyless, about 50 requests per 5 seconds. Used for metadata only; no audio. Imported songs are stored in `extra_songs`. | Free |
 | **Chorus song bank** (`data/catalog.json`) | Metadata for 3,950 songs: title, artist, album, year, genre, language, artwork, duration, difficulty | Metadata and artwork URLs from Deezer's public API, gathered by the Chorus project. No audio is used from Deezer. | Free |
 
 The catalogue is honest about gaps: a song with no attached karaoke video is shown greyed out as
@@ -21,7 +22,9 @@ The catalogue is honest about gaps: a song with no attached karaoke video is sho
 it an instrumental; a video whose title does not say karaoke or instrumental is labelled
 "Original recording (vocals included)".
 
-The 338 karaoke videos attached at launch came from a one-off manual search pass over the most
+Auto-find never re-searches a song that already has a video, stores every find, and pauses when YouTube reports the daily quota is spent, so a large import finishes over several days instead of failing. Without a key, the song page offers a "Search on YouTube" link and a paste box.
+
+The karaoke videos attached at launch came from a one-off manual search pass over the most
 popular songs in each scene. Each was checked through oEmbed for existence and embeddability.
 Videos can disappear or have embedding turned off later; the player then says so instead of
 failing silently.

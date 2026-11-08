@@ -64,6 +64,17 @@ does the scoring, so a saved score is computed, never claimed.
 Songs without melody data get lite scoring (timing, steadiness, completion) and every reveal says
 pitch was not judged.
 
+## Growing the library
+
+`services/imports.ts` reads a song or a whole discography from Deezer. A discography is every
+album and single (compilations skipped) plus the artist's top 100 tracks, which is where
+soundtrack hits live. Titles go through the same version filter Chorus uses (remixes, live,
+acoustic, karaoke and sped-up versions out; a radio edit is kept under its clean title), and
+duplicates across releases collapse to the most-played recording. Then auto-find fetches synced
+lyrics from LRCLIB and, with a YouTube Data API key, searches one karaoke video per song,
+checks it through oEmbed and attaches only karaoke or instrumental versions. Tested end to end
+on ZAYN's catalogue: 96 songs, 95 with synced lyrics.
+
 ## The queue
 
 One song per person per round: a new entry slots in after the last entry of its round, so somebody

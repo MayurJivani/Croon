@@ -5,6 +5,7 @@ import type { SongMeta } from '../../../../packages/core/src/protocol.ts';
 import { Shelf, langName, Key, Loading, Toast } from '../components/ui.tsx';
 import { api } from '../lib/api.ts';
 import { useNavigate } from 'react-router-dom';
+import { FindAnySong } from '../components/FindAnySong.tsx';
 
 type Facets = { genres: { name: string; total: number; playable: number }[]; languages: { code: string; total: number; playable: number }[] };
 type Home = { trending: SongMeta[]; popular: SongMeta[]; recentlyAdded: SongMeta[]; recommended: SongMeta[]; crates: { id: string; name: string; blurb: string; playable: number; total: number }[] };
@@ -158,6 +159,7 @@ export default function Library() {
               <p className="result-count" aria-live="polite">{res.total.toLocaleString()} {res.total === 1 ? 'song' : 'songs'}</p>
               <Shelf songs={res.songs} empty={sp.get('field') === 'lyrics' ? 'No lyrics match. Lyric search covers house band songs and every song whose synced lyrics Croon has fetched.' : 'No songs match. Try fewer words or another filter.'} />
               {res.songs.length < res.total && <div className="more"><Key onClick={more}>Load more</Key></div>}
+              {sp.get('q') && <FindAnySong key={sp.get('q')} initial={sp.get('q') ?? ''} />}
             </>
           )}
           {!crate && !searching && home && (
@@ -166,6 +168,7 @@ export default function Library() {
               <section className="section"><div className="section-head"><h2>Trending this week</h2></div><Shelf songs={home.trending.slice(0, 10)} /></section>
               <section className="section"><div className="section-head"><h2>Popular karaoke</h2></div><Shelf songs={home.popular.slice(0, 10)} /></section>
               <section className="section"><div className="section-head"><h2>Recently added</h2></div><Shelf songs={home.recentlyAdded.slice(0, 10)} /></section>
+              <div className="section"><FindAnySong initial="" /></div>
             </>
           )}
         </div>

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { asyncH, requireAuth, searchLimiter, validate, writeLimiter, HttpError } from '../middleware/http.ts';
+import { asyncH, requireAuth, searchLimiter, validate, writeLimiter, roomLimiter, HttpError } from '../middleware/http.ts';
+import { discover, importTrack, autoFind, startArtistImport, getJob } from '../services/imports.ts';
 import { search, facets, songMeta, crate, CRATES, addSourceToMemory, playableKeys, catalogRaw } from '../services/catalog.ts';
 import { lyricsFor, lookupLyrics } from '../services/lyrics.ts';
 import { verifyVideo, videoIdFrom, searchKaraoke, searchAvailable } from '../services/youtube.ts';
@@ -37,6 +38,27 @@ songsRouter.get('/lookup/lyrics', searchLimiter, validate(z.object({ artist: z.s
   if (!r) throw new HttpError(404, 'LRCLIB has no synced lyrics for that song.');
   res.json(r);
 }));
+
+// ---- growing the library -------------------------------------------------------------------
+songsRouter.get('/discover', searchLimiter, validate(z.object({ q: z.string().trim().min(2).max(100) }), 'query'), asyncH(async (req, res) => {
+  res.json(await discover((req.query as unknown as { q: string }).q));
+}));
+
+songsRouter.post('/import', requireAuth, writeLimiter, validate(z.object({ deezerId: z.string().regex(/^\d{1,15}$/) })), asyncH(async (req, res) => {
+  const song = await importTrack(req.body.deezerId, req.session.userId);
+  const found = await autoFind(song.key, req.session.userId);
+  res.status(201).json({ song: songMeta(song.key), found, canSearchVideos: searchAvailable() });
+}));
+
+songsRouter.post('/import-artist', requireAuth, roomLimiter, validate(z.object({ artistId: z.string().regex(/^\d{1,15}$/), name: z.string().trim().min(1).max(120) })), (req, res) => {
+  res.status(202).json({ job: startArtistImport(req.body.artistId, req.body.name, req.session.userId) });
+});
+
+songsRouter.get('/imports/:id', (req, res) => {
+  const job = getJob(String(req.params.id));
+  if (!job) throw new HttpError(404, 'No such import.');
+  res.json({ job, songs: job.keys.map(songMeta).filter(Boolean) });
+});
 
 songsRouter.get('/random', (_req, res) => {
   const keys = playableKeys();
@@ -79,6 +101,12 @@ songsRouter.post('/:key/sources', requireAuth, writeLimiter, validate(z.object({
   await sql`insert into song_sources (song_key, video_id, video_title, channel, label, added_by) values (${k}, ${v.videoId}, ${v.videoTitle}, ${v.channel}, ${v.label}, ${req.session.userId}) on conflict do nothing`;
   addSourceToMemory(k, v);
   res.status(201).json({ source: v, song: songMeta(k) });
+}));
+
+songsRouter.post('/:key/autofind', requireAuth, writeLimiter, validate(z.object({ key }), 'params'), asyncH(async (req, res) => {
+  const k = String(req.params.key);
+  if (!k.startsWith('dz:') || !songMeta(k)) throw new HttpError(404, 'Song not found.');
+  res.json({ found: await autoFind(k, req.session.userId), song: songMeta(k), canSearchVideos: searchAvailable() });
 }));
 
 const searched = new Map<string, Awaited<ReturnType<typeof searchKaraoke>>>();

@@ -41,13 +41,22 @@ export async function verifyVideo(id: string): Promise<Yt | null> {
   return { kind: 'youtube', videoId: id, videoTitle: o.title.slice(0, 200), channel: (o.author_name ?? 'YouTube').slice(0, 100), label: labelFor(o.title) };
 }
 
+/** The daily quota ran out (HTTP 403 quotaExceeded). Searches pause instead of failing one by one. */
+export class QuotaError extends Error {}
+let quotaPausedUntil = 0;
 export const searchAvailable = () => !!env.YOUTUBE_API_KEY;
 
 /** Karaoke video search through the YouTube Data API (100 quota units a call; results are cached by the caller). */
 export async function searchKaraoke(title: string, artist: string): Promise<Yt[]> {
   if (!env.YOUTUBE_API_KEY) return [];
+  if (Date.now() < quotaPausedUntil) throw new QuotaError('YouTube search quota used up for now');
   const q = new URLSearchParams({ part: 'snippet', type: 'video', videoEmbeddable: 'true', maxResults: '6', q: `${title} ${artist} karaoke`, key: env.YOUTUBE_API_KEY });
   const r = await fetch(`https://www.googleapis.com/youtube/v3/search?${q}`, { signal: AbortSignal.timeout(8000) });
+  if (r.status === 403 && (await r.clone().text()).includes('quota')) {
+    // Quota resets at midnight Pacific; pausing an hour at a time is close enough and cheap.
+    quotaPausedUntil = Date.now() + 3600_000;
+    throw new QuotaError('YouTube search quota used up for now');
+  }
   if (!r.ok) return [];
   const j = (await r.json()) as { items?: { id: { videoId: string }; snippet: { title: string; channelTitle: string } }[] };
   return (j.items ?? []).map((i) => ({ kind: 'youtube' as const, videoId: i.id.videoId, videoTitle: i.snippet.title, channel: i.snippet.channelTitle, label: labelFor(i.snippet.title) }));

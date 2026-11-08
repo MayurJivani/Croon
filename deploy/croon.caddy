@@ -1,0 +1,10 @@
+http://croon.futile.studio {
+	import common
+	# Socket.IO carries every room and guest audio files arrive as uploads; never buffer.
+	request_body {
+		max_size 41MB
+	}
+	reverse_proxy 127.0.0.1:4398 {
+		flush_interval -1
+	}
+}

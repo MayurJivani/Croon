@@ -4,9 +4,10 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
-for (const line of readFileSync(new URL('../../../.env', import.meta.url), 'utf8').split('\n')) {
+const envFile = new URL('../../../.env', import.meta.url);
+for (const line of existsSync(envFile) ? readFileSync(envFile, 'utf8').split('\n') : []) {
   const m = line.match(/^([A-Z_]+)=(.*)$/);
   if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
 }

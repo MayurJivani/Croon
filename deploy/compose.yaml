@@ -1,0 +1,24 @@
+# Coolify on Jinx (FRC/DEPLOY.md). Host network: the app listens on 4398 and reaches the
+# box's native Postgres on loopback; secrets live in /etc/apps/croon.env (deploy/deploy.sh).
+services:
+  croon:
+    image: ghcr.io/mayurjivani/croon:latest
+    pull_policy: always
+    network_mode: host
+    restart: unless-stopped
+    user: "1000:1000"
+    env_file:
+      - path: /etc/apps/croon.env
+        required: true
+    environment:
+      NODE_ENV: "production"
+      PORT: "4398"
+      HOST: "127.0.0.1"
+      # cloudflared and Caddy sit in front.
+      TRUST_PROXY: "2"
+    mem_limit: 512m
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]

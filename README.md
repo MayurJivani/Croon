@@ -9,6 +9,7 @@ A karaoke lounge in the browser. Put a room on the TV, everyone joins from their
 - **One clock for the room.** The server owns the playback timeline; every phone and the stage follow it, so late joiners and sleepy phones land on the right line.
 - **Fair scoring.** Pitch and timing from the phone's microphone, scored on the server, octave-agnostic and corrected for device delay. Audio never leaves the phone.
 - **Party modes:** duet, battle, group, random challenge, blind karaoke, party roulette, team battle.
+- **Find any song.** Look up a song or a whole discography on Deezer, bring it in, and Croon auto-finds synced lyrics (LRCLIB) and a karaoke video (YouTube Data API, when a key is set).
 - **Host mode** for organised nights, with a projector stage screen and a leaderboard that outlives the night.
 
 How it works: [HOW-IT-WORKS.md](HOW-IT-WORKS.md). Where the audio and lyrics come from: [docs/SOURCES.md](docs/SOURCES.md).
@@ -22,5 +23,7 @@ npm install
 npm run migrate -w apps/server
 npm run dev            # web on :5198, server on :4398
 ```
+
+Live at [croon.futile.studio](https://croon.futile.studio). Push to `main` builds the image, runs the tests and deploys through Coolify (`deploy/`, see FRC/DEPLOY.md).
 
 `npm test` runs the core and end-to-end tests (needs the database), `npm run lint` and `npm run typecheck` check the rest. `npm run build` builds the web app; the server serves it from `apps/web/dist` in production.
