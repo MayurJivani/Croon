@@ -218,8 +218,26 @@ test('sync points: one is an offset, two stretch, bad taps cannot tangle the map
   assert.equal(timeMap([[60, 24]])(100), 64, 'a single point is a plain offset (a shorter intro)');
   const f = timeMap([[60, 24], [160, 134]]);
   assert.equal(f(110), 79, 'between points the lyrics stretch to fit the edit');
-  assert.equal(f(200), 174, 'after the last point it runs at normal speed from there');
+  assert.equal(f(200), 174, 'after the last point a cut-sized slope (10%) runs at normal speed from there');
   assert.equal(f(30), -6, 'before the first point too');
+  // "Talk to me in French": LRCLIB times the studio take, the karaoke video is the live edit. Measured
+  // from the video's own wipes over 38 lines: video = 3.43 s + 1.0128 x lyric time.
+  const lrc = [12.76, 16.48, 19.97, 44.3, 64.03, 89.87, 113.35, 136.42, 142.82];
+  const video = [16.82, 20.22, 23.62, 47.94, 68.86, 94.22, 118.46, 142.02, 148.1];
+  const live = timeMap([[12.76, 16.36], [142.82, 148.08]]); // "First line now" plus one tap near the end
+  for (const [i, t] of lrc.entries()) assert.ok(Math.abs(live(t) - video[i]) < 0.6, `line at ${t} maps to ${live(t).toFixed(2)}, video sings it at ${video[i]}`);
+  const tapsEarly = timeMap([[12.76, 16.36], [44.3, 48.3]]);
+  assert.ok(Math.abs(tapsEarly(142.82) - 148.1) < 0.6, `the tempo carries past the last tap: ${tapsEarly(142.82).toFixed(2)}`);
+  assert.ok(Math.abs(tapsEarly(0) - (16.36 - 12.76 * (31.94 / 31.54))) < 0.01, 'and before the first');
+  // Karaoke-video style: a line-timed line fills evenly over its whole length, as the video wipes it...
+  const [l1, l2] = parseLrc('[00:10.00]aaaaaaaaaa bbbbbbbbbb\n[00:14.00]Before a long break\n[00:40.00]end', 50).lines;
+  assert.deepEqual(wordFills(l1, 11, false, true), [0.5, 0], 'one second of four: half the first word');
+  assert.deepEqual(wordFills(l1, 13, false, true), [1, 0.5]);
+  assert.ok(wordFills(l1, 13, false)[1] === 1, 'the default estimate has already finished it');
+  // ...but a line before a 26-second break does not crawl through the break.
+  assert.equal(wordFills(l2, 14 + 2 * (sungEnd(l2, false) - 14) + 0.5, false, true).at(-1), 1);
+  const offsetOnly = timeMap([[12.76, 16.36]]);
+  assert.ok(Math.abs(offsetOnly(142.82) - 148.1) > 1, 'one tap alone cannot fix a tempo difference');
   let a = addAnchor([], 60, 24);
   a = addAnchor(a, 160, 134);
   a = addAnchor(a, 161, 140);

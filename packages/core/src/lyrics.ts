@@ -183,11 +183,14 @@ export function sungEnd(line: Line, wordTimed: boolean): number {
 }
 
 /** How far each word of a line is filled (0 to 1) at time t; line-timed words share the estimate by length. */
-export function wordFills(line: Line, t: number, wordTimed: boolean): number[] {
+export function wordFills(line: Line, t: number, wordTimed: boolean, even = false): number[] {
   if (wordTimed) return line.words.map((w) => wordProgress(w, t));
   const lens = line.words.map((w) => [...w.text].length || 1);
   const total = lens.reduce((a, b) => a + b, 0);
-  const span = sungEnd(line, false) - line.t;
+  // `even`: spread over the whole line, as karaoke videos wipe, but a line before a long break
+  // still finishes within twice its estimated singing time instead of crawling through the break.
+  const est = sungEnd(line, false) - line.t;
+  const span = even ? Math.min(line.end - line.t, 2 * est + 0.5) : est;
   let at = line.t;
   return lens.map((n) => {
     const d = (span * n) / total;
@@ -209,10 +212,15 @@ export function timeMap(anchors: Anchor[]): (t: number) => number {
   const a = [...anchors].sort((x, y) => x[0] - y[0]);
   if (!a.length) return (t) => t;
   const first = a[0], last = a[a.length - 1];
+  // Outside the points the song keeps the edit's overall tempo when that looks like a tempo (a live or
+  // re-recorded take runs a few percent slower or faster), so two taps align a whole song. A steeper
+  // overall slope is a cut or an added section, not a tempo, and outside it runs at normal speed.
+  const overall = a.length > 1 ? (last[1] - first[1]) / (last[0] - first[0]) : 1;
+  const tempo = Math.abs(overall - 1) <= 0.05 ? overall : 1;
   return (t) => {
-    // Before the first and after the last point the song runs at normal speed.
-    if (a.length === 1 || t <= first[0]) return t + (first[1] - first[0]);
-    if (t >= last[0]) return t + (last[1] - last[0]);
+    if (a.length === 1) return t + (first[1] - first[0]);
+    if (t <= first[0]) return first[1] + (t - first[0]) * tempo;
+    if (t >= last[0]) return last[1] + (t - last[0]) * tempo;
     const i = a.findIndex((p) => p[0] > t);
     const [x0, y0] = a[i - 1], [x1, y1] = a[i];
     const slope = Math.max(0.25, Math.min(4, (y1 - y0) / (x1 - x0)));

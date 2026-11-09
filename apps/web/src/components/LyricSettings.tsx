@@ -1,6 +1,6 @@
 import type { LyricPrefs } from '../lib/lyrics.ts';
 
-const STYLES: [LyricPrefs['style'], string][] = [['classic', 'Classic wipe'], ['word', 'Word by word'], ['line', 'Line'], ['cinematic', 'Cinematic'], ['dual', 'Two-line']];
+export const STYLES: [LyricPrefs['style'], string][] = [['classic', 'Classic wipe'], ['word', 'Word by word'], ['line', 'Line'], ['cinematic', 'Cinematic'], ['dual', 'Two-line'], ['karaoke', 'Karaoke video']];
 
 export function LyricSettings({ prefs, set, hasRoman, hasTranslation, wordTimed, note }: { prefs: LyricPrefs; set(p: Partial<LyricPrefs>): void; hasRoman: boolean; hasTranslation: boolean; wordTimed: boolean; note?: string | null }) {
   return (

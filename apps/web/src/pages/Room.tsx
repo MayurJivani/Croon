@@ -18,7 +18,7 @@ import { useSession } from '../lib/session.tsx';
 import { api } from '../lib/api.ts';
 import type { Mic as MicT } from '../audio/mic.ts';
 import { Lyrics } from '../components/Lyrics.tsx';
-import { LyricSettings } from '../components/LyricSettings.tsx';
+import { LyricSettings, STYLES } from '../components/LyricSettings.tsx';
 import { Spotlight } from '../components/Spotlight.tsx';
 import { ScoreReveal } from '../components/ScoreReveal.tsx';
 import { Calibrate } from '../components/Calibrate.tsx';
@@ -400,6 +400,11 @@ function SettingsTab({ view, emit }: { view: RoomView; emit: (e: string, d?: unk
       <label className="check"><input type="checkbox" checked={s.guestsCanQueue} onChange={(e) => set({ guestsCanQueue: e.target.checked })} /> Guests can add songs</label>
       <label className="check"><input type="checkbox" checked={s.autoAdvance} onChange={(e) => set({ autoAdvance: e.target.checked })} /> Start the next song automatically after results</label>
       <label className="check"><input type="checkbox" checked={s.stageLyricsWithVideo} onChange={(e) => set({ stageLyricsWithVideo: e.target.checked })} /> Show Croon's lyrics beside videos on the stage (never over karaoke or lyric videos, which have their own)</label>
+      <label className="range-row"><span>Stage lyrics</span>
+        <select value={s.stageLyricStyle} onChange={(e) => set({ stageLyricStyle: e.target.value as RoomView['settings']['stageLyricStyle'] })} aria-label="Stage lyric style">
+          {[['auto', 'Pick by song'], ...STYLES].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+      </label>
       <label className="range-row"><span>Songs each</span><input type="range" min={1} max={10} value={s.maxPerPerson} onChange={(e) => set({ maxPerPerson: Number(e.target.value) })} /><b className="num">{s.maxPerPerson}</b></label>
       <label className="range-row"><span>Skip needs</span><input type="range" min={0.3} max={1} step={0.05} value={s.skipRatio} onChange={(e) => set({ skipRatio: Number(e.target.value) })} /><b className="num">{Math.round(s.skipRatio * 100)}%</b></label>
     </div>

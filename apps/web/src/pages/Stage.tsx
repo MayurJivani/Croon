@@ -147,7 +147,7 @@ export default function Stage() {
               {showLyrics && (
                 <div>
                   {ts.length > 0 && trailList.length > 0 && <PitchLane targets={ts} pos={getPos} trails={trailList} colors={['#2ec4b6', '#ff4f2e', '#ffc23d', '#b388eb']} />}
-                  {lyrics ? <Lyrics lyrics={lyrics} pos={getPos} prefs={{ ...DEFAULT_PREFS, style: isVideo ? 'line' : lyrics.wordTimed ? 'classic' : 'line', size: 1 }} parts={!!MODES[c.mode].parts} variant="stage" />
+                  {lyrics ? <Lyrics lyrics={lyrics} pos={getPos} prefs={{ ...DEFAULT_PREFS, style: view.settings.stageLyricStyle !== 'auto' ? view.settings.stageLyricStyle : isVideo ? 'line' : lyrics.wordTimed ? 'classic' : 'line', size: 1 }} parts={!!MODES[c.mode].parts} variant="stage" />
                     : <p className="empty">{lyr.status === 'loading' ? 'Fetching lyrics…' : isVideo ? 'Follow the lyrics in the video.' : 'No lyrics for this track.'}</p>}
                 </div>
               )}

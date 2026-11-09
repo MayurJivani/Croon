@@ -313,6 +313,14 @@ select:focus, input:focus, textarea:focus { outline: 3px solid var(--marigold); 
 .s-cinematic .lyr-line.now .w { opacity: 0.4; transition: opacity 200ms; }
 .s-cinematic .lyr-line.now .w.on { opacity: 1; color: var(--card); }
 .s-cinematic .lyr-line.next { opacity: 0.45; }
+/* Karaoke video: as karaoke channels burn it in. Two centred lines on black, heavy white type with
+   a dark outline and drop shadow; the line being sung wipes gold, a sung line stays gold. */
+.lyrics.s-karaoke { background: #000; border-radius: 10px; padding: calc(28px * var(--lyr-scale)) 16px; }
+.lyr-kara { display: flex; flex-direction: column; align-items: center; gap: calc(14px * var(--lyr-scale)); width: 100%; text-align: center; }
+.s-karaoke .lyr-line, .s-karaoke .lyr-line.now, .s-karaoke .lyr-line.next, .s-karaoke .lyr-line.past { font: 800 calc(clamp(24px, 4vw, 56px) * var(--lyr-scale))/1.15 var(--ui); font-stretch: 100%; letter-spacing: 0; color: #fff; opacity: 1; -webkit-text-stroke: 0.06em #120d0c; paint-order: stroke fill; text-shadow: 0.05em 0.07em 0 rgba(0, 0, 0, 0.85); }
+.s-karaoke .lyr-line.now .w::after { content: attr(data-text); position: absolute; left: 0; top: 0; color: var(--marigold); clip-path: inset(-0.3em calc(100% - var(--p, 0%)) -0.3em 0); }
+.s-karaoke .lyr-line.past .w { color: var(--marigold); }
+.v-phone.s-karaoke .lyr-line { font-size: calc(clamp(20px, 6vw, 30px) * var(--lyr-scale)); }
 .lyr-dual { display: flex; flex-direction: column; gap: calc(26px * var(--lyr-scale)); width: 100%; }
 .lyr-dual .lyr-line:first-child { text-align: left; } .lyr-dual .lyr-line:last-child { text-align: right; }
 .s-dual .lyr-line { font-size: calc(clamp(26px, 4.4vw, 58px) * var(--lyr-scale)); }
@@ -472,6 +480,7 @@ select:focus, input:focus, textarea:focus { outline: 3px solid var(--marigold); 
 .stage .lyr-line.next { font-size: calc(clamp(24px, 3.2vw, 64px) * var(--lyr-scale)); }
 .stage .lyr-line.past { font-size: calc(clamp(20px, 2.4vw, 48px) * var(--lyr-scale)); }
 .stage .with-video .lyr-line.now { font-size: calc(clamp(30px, 3.6vw, 80px) * var(--lyr-scale)); }
+.stage .s-karaoke .lyr-line.now, .stage .s-karaoke .lyr-line.next, .stage .s-karaoke .lyr-line.past { font-size: calc(clamp(34px, 4.6vw, 96px) * var(--lyr-scale)); }
 .stage-bottom { display: grid; grid-template-columns: auto 1fr minmax(320px, 34vw); gap: 3vw; align-items: end; }
 .stage-singer { display: flex; align-items: center; gap: 1.4vw; }
 .stage-singer .r { font: 700 clamp(11px, 0.9vw, 16px)/1 var(--ui); letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.6vh; }

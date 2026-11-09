@@ -87,7 +87,7 @@ export function Lyrics({ lyrics, pos, prefs, myPart, parts, variant = 'player', 
       const el = root.current?.querySelector<HTMLElement>(`.lyr-line[data-active][data-line="${i}"]`);
       const line = lyrics.lines[i];
       if (el && line) {
-        const fills = wordFills(line, t, lyrics.wordTimed);
+        const fills = wordFills(line, t, lyrics.wordTimed, prefs.style === 'karaoke');
         const ws = el.querySelectorAll<HTMLElement>('.w');
         ws.forEach((node) => {
           const p = fills[Number(node.dataset.w)];
@@ -101,7 +101,7 @@ export function Lyrics({ lyrics, pos, prefs, myPart, parts, variant = 'player', 
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [lyrics, pos]);
+  }, [lyrics, pos, prefs.style]);
 
   const style = prefs.style;
   const ls = lyrics.lines;
@@ -110,7 +110,16 @@ export function Lyrics({ lyrics, pos, prefs, myPart, parts, variant = 'player', 
   const upcoming = idx < 0 ? ls[0] : ls[idx + 1];
 
   let body;
-  if (style === 'dual') {
+  if (style === 'karaoke') {
+    // As karaoke videos draw it: lines in pairs. The first fills while the second waits below, a sung
+    // line stays filled, and the pair turns over once both are sung.
+    const page = cur - (cur % 2);
+    body = (
+      <div className="lyr-kara">
+        {[ls[page], ls[page + 1]].map((l, k) => l && <LineView key={page + k} line={l} li={page + k} active={l === nowLine} state={l === nowLine ? 'now' : page + k < idx ? 'past' : 'next'} prefs={prefs} parts={parts} myPart={myPart} onPick={onPickLine} />)}
+      </div>
+    );
+  } else if (style === 'dual') {
     // Karaoke-machine style: two fixed slots that alternate, so the eye never chases a moving line.
     const top = cur % 2 === 0 ? ls[cur] : ls[cur + 1];
     const bottom = cur % 2 === 0 ? ls[cur + 1] : ls[cur];

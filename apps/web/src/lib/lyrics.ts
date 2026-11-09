@@ -9,6 +9,7 @@ export function withRoman(l: Lyrics): Lyrics {
   return { ...l, lines: l.lines.map((ln) => ({ ...ln, words: ln.words.map((w) => (w.roman || !needsRoman(w.text) ? w : { ...w, roman: romanize(w.text.replace(/-$/, '')) + (w.text.endsWith('-') ? '-' : '') })) })) };
 }
 import type { SongMeta } from '../../../../packages/core/src/protocol.ts';
+import type { LyricStyle } from '../../../../packages/core/src/labels.ts';
 import { api } from './api.ts';
 
 export type LyricsState = { lyrics: Lyrics | null; status: 'loading' | 'ready' | 'none' | 'error'; credit: string | null; plain?: string | null };
@@ -38,7 +39,7 @@ export function useSongLyrics(song: SongMeta | null, inline?: string | null): Ly
 }
 
 /** script: which spelling is the big line; roman: also show the other one small under it. */
-export type LyricPrefs = { style: 'classic' | 'word' | 'line' | 'cinematic' | 'dual'; size: number; position: 'top' | 'middle' | 'bottom'; script: 'latin' | 'original'; roman: boolean; translation: boolean };
+export type LyricPrefs = { style: LyricStyle; size: number; position: 'top' | 'middle' | 'bottom'; script: 'latin' | 'original'; roman: boolean; translation: boolean };
 export const DEFAULT_PREFS: LyricPrefs = { style: 'classic', size: 1, position: 'middle', script: 'latin', roman: true, translation: false };
 
 export function usePrefs<T extends object>(key: string, initial: T): [T, (p: Partial<T>) => void] {

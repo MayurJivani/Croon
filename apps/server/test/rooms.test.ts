@@ -453,6 +453,27 @@ test('room seeding: only a signed-in user brings a new song in, and it can be qu
   }
 });
 
+test('lyric timing for a video is saved on the server for everyone, by signed-in singers only', async () => {
+  const key = 'dz:531950', videoId = 'qGAGzI_17o0'; // a curated karaoke video
+  const anon = agent();
+  await anon.init();
+  assert.equal((await anon.call('POST', `/api/songs/${key}/sync`, { videoId, anchors: [[12.76, 16.36]] })).status, 401);
+  const u = agent();
+  await u.init();
+  await u.call('POST', '/api/auth/register', { username: 'test_timer', password: 'in-step-with-it-3' });
+  assert.equal((await u.call('POST', `/api/songs/${key}/sync`, { videoId, anchors: [[1, 2, 3]] })).status, 400, 'a malformed point');
+  assert.equal((await u.call('POST', `/api/songs/${key}/sync`, { videoId, anchors: Array.from({ length: 61 }, (_, i) => [i, i]) })).status, 400, 'too many points');
+  assert.equal((await u.call('POST', `/api/songs/${key}/sync`, { videoId: 'aaaaaaaaaaa', anchors: [] })).status, 404, 'a video not attached to the song');
+  try {
+    assert.equal((await u.call('POST', `/api/songs/${key}/sync`, { videoId, anchors: [[12.76, 16.36], [142.82, 148.08]] })).status, 200);
+    const seen = await agent().call('GET', `/api/songs/${key}`);
+    assert.deepEqual(seen.body.song.sources[0].lyricAnchors, [[12.76, 16.36], [142.82, 148.08]], 'another visitor gets the timing');
+  } finally {
+    await u.call('POST', `/api/songs/${key}/sync`, { videoId, anchors: [] });
+    await sql`delete from song_sources where song_key = ${key} and video_id = ${videoId} and lyric_anchors is null`;
+  }
+});
+
 test('events: organiser creates, reopens as host, public page shows the board', async () => {
   const o = agent();
   await o.init();

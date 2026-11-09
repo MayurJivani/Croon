@@ -6,7 +6,7 @@ import type { Timeline } from './timeline.ts';
 import type { Score } from './scoring.ts';
 import type { ModeId } from './modes.ts';
 import type { Anchor } from './lyrics.ts';
-import { AVATAR_GLYPHS, type RoomSettings } from './labels.ts';
+import { AVATAR_GLYPHS, LYRIC_STYLES, type RoomSettings } from './labels.ts';
 export * from './labels.ts';
 
 /** Where a song's audio comes from. Every variant says plainly what the listener will hear. */
@@ -119,7 +119,7 @@ export const C2S = {
   lyricAnchors: z.object({ anchors: z.array(z.tuple([z.number().min(-60).max(36_000), z.number().min(-60).max(36_000)])).max(60) }),
   skipVote: z.object({}),
   cheer: z.object({}),
-  settings: z.object({ scoring: z.boolean(), maxPerPerson: z.number().int().min(1).max(10), guestsCanQueue: z.boolean(), skipRatio: z.number().min(0.3).max(1), autoAdvance: z.boolean(), stageLyricsWithVideo: z.boolean(), audioOut: z.enum(['stage', 'all']), hostRole: z.enum(['singer', 'screen']) }).partial(),
+  settings: z.object({ scoring: z.boolean(), maxPerPerson: z.number().int().min(1).max(10), guestsCanQueue: z.boolean(), skipRatio: z.number().min(0.3).max(1), autoAdvance: z.boolean(), stageLyricsWithVideo: z.boolean(), audioOut: z.enum(['stage', 'all']), hostRole: z.enum(['singer', 'screen']), stageLyricStyle: z.enum(['auto', ...LYRIC_STYLES]) }).partial(),
   participant: z.object({ pid: id, action: z.enum(['kick', 'promote', 'team']), team: z.enum(['A', 'B']).nullable().optional() }),
   /** Live pitch for the stage's lane: song time and MIDI (or null), at most ~12 a second. */
   live: z.object({ t: z.number().min(0).max(36_000), m: z.number().min(0).max(127).nullable() }),
