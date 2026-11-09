@@ -73,7 +73,7 @@ function toRaw(t: DzTrack, album: DzAlbum | null): Raw {
   };
 }
 
-async function saveExtra(raw: Raw, userId: string | null) {
+export async function saveExtra(raw: Raw, userId: string | null) {
   await sql`insert into extra_songs (deezer_id, data, added_by) values (${raw.id}, ${sql.json(raw as never)}, ${userId}) on conflict (deezer_id) do nothing`;
   addExtraSong(raw);
 }
