@@ -4,7 +4,7 @@
 // shortcut: in-memory search, fine to ~100k songs; past that move it to Postgres full-text search.
 import { readFileSync, existsSync } from 'node:fs';
 import { HOUSE_BAND, compile, houseLyricText } from '../../../../packages/core/src/houseband.ts';
-import { vocalRange } from '../../../../packages/core/src/lyrics.ts';
+import { vocalRange, burnedLyrics } from '../../../../packages/core/src/lyrics.ts';
 import type { SongMeta, Source } from '../../../../packages/core/src/protocol.ts';
 import { sql } from '../db/client.ts';
 import { logger } from '../logger.ts';
@@ -117,7 +117,7 @@ export function songMeta(key: string): SongMeta | null {
     return {
       key, title: s.title, artist: s.featured?.length ? `${s.artist}, ${s.featured.join(', ')}` : s.artist, album: s.album, year: s.year, genre: s.genre, language: s.language,
       artwork: s.artwork, duration: s.duration, difficulty: s.difficulty, range: null, sources: src, lyrics: lyr,
-      scoring: src.length && (lyr === 'line' || lyr === 'word') ? 'lite' : 'none', addedAt: sourceAddedAt.get(key),
+      scoring: src.length && (lyr === 'line' || lyr === 'word') ? 'lite' : 'none', hasBurnedLyrics: burnedLyrics(src[0]), addedAt: sourceAddedAt.get(key),
     };
   }
   return null;
@@ -164,8 +164,8 @@ export function search(o: SearchQuery): { total: number; songs: SongMeta[] } {
       }
       if (!s) continue;
     }
-    // Playable songs first, then popularity.
-    s += (isPlayable(m) ? 1000 : 0) + Math.min(99, (catalogRaw(key)?.rank ?? 400_000) / 10_000);
+    // Playable songs first, then how well it matches, then popularity (kept below one match tier).
+    s += (isPlayable(m) ? 1000 : 0) + Math.min(9, (catalogRaw(key)?.rank ?? 400_000) / 100_000);
     scored.push({ m, s });
   }
   scored.sort((a, b) => b.s - a.s);

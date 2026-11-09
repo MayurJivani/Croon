@@ -21,29 +21,19 @@ export function Calibrate({ onReady, onClose }: { onReady(mic: Mic): void; onClo
 
   useEffect(() => void listMics().then(setMics).catch(() => {}), [step]);
 
-  const run = async () => {
+  // A saved setup is re-checked, shorter, never taken on trust: the room and the phone's position change.
+  const run = async (dev = device, ec = echo, short = false) => {
     try {
-      await mic.open(device, echo);
+      await mic.open(dev, ec);
       setStep('quiet');
-      await mic.measureFloor(2000);
+      await mic.measureFloor(short ? 1000 : 2000);
       setStep('sing');
-      const ratio = await mic.checkVoice(3000, (l, m) => {
+      const ratio = await mic.checkVoice(short ? 2000 : 3000, (l, m) => {
         setLevel(l);
         setNote(m);
       });
-      mic.remember(device, echo);
+      if (ratio > 0.3) mic.remember(dev, ec);
       setStep(ratio > 0.3 ? 'done' : 'weak');
-    } catch (e) {
-      setErr((e as Error).message);
-      setStep('error');
-    }
-  };
-
-  const quick = async () => {
-    try {
-      await mic.open(saved!.deviceId, saved!.echo);
-      mic.floor = saved!.floor;
-      onReady(mic);
     } catch (e) {
       setErr((e as Error).message);
       setStep('error');
@@ -75,31 +65,31 @@ export function Calibrate({ onReady, onClose }: { onReady(mic: Mic): void; onClo
           )}
           <label className="check"><input type="checkbox" checked={echo} onChange={(e) => setEcho(e.target.checked)} /> Cancel this device's own speakers (turn off if you sing through headphones and scores look low)</label>
           <div className="row">
-            <Key tone="hot" onClick={run} icon={<MicIcon size={16} />}>Calibrate (5 seconds)</Key>
-            {saved && <Key onClick={quick}>Use last calibration</Key>}
+            <Key tone="hot" onClick={() => run()} icon={<MicIcon size={16} />}>Calibrate (5 seconds)</Key>
+            {saved && <Key onClick={() => run(saved.deviceId, saved.echo, true)}>Re-check my last setup (3 seconds)</Key>}
           </div>
         </>
       )}
-      {step === 'quiet' && <p className="calib-step big">Stay quiet for two seconds while Croon hears the room…</p>}
+      {step === 'quiet' && <p className="calib-step big">Stay quiet for a moment while Croon hears the room…</p>}
       {step === 'sing' && (
         <>
-          <p className="calib-step big">Now sing one steady "laaa" for three seconds.</p>
+          <p className="calib-step big">Now sing one steady "laaa" until this changes.</p>
           <div className="meter" aria-hidden><i style={{ width: `${Math.min(100, level * 600)}%` }} /></div>
           <p className="calib-note">{note ? `Hearing ${noteName(Math.round(note))}` : 'Listening…'}</p>
         </>
       )}
       {step === 'done' && (
         <>
-          <p className="calib-step big">Your voice comes through clearly. Scoring is on.</p>
-          <Key tone="hot" onClick={() => onReady(mic)}>Start singing</Key>
+          <p className="calib-step big">Your voice comes through clearly.</p>
+          <p className="calib-note">Mic delay {Math.round(mic.latency * 1000)} ms, corrected. Speaker delay is found while you sing.</p>
+          <Key tone="hot" onClick={() => onReady(mic)}>I'm ready</Key>
         </>
       )}
       {step === 'weak' && (
         <>
-          <p className="calib-step">Croon barely heard a steady note. Move closer to the mic, sing a little louder, or pick another microphone. You can still score, but expect lower numbers.</p>
+          <p className="calib-step">Croon barely heard a steady note. Move closer to the mic, sing a little louder, or pick another microphone, then try again. If it will not pass, the host can turn scoring off for the night.</p>
           <div className="row">
-            <Key onClick={run}>Try again</Key>
-            <Key tone="hot" onClick={() => onReady(mic)}>Score anyway</Key>
+            <Key tone="hot" onClick={() => setStep('intro')}>Try again</Key>
           </div>
         </>
       )}

@@ -1,6 +1,7 @@
-// The speakers of a room. Mounted only on the device that owns playback (the stage screen, or the
+// The speakers of a room. Mounted on the device that owns playback (the stage screen, or the
 // host's own device when no stage is connected). It loads the current track, follows the server
-// timeline, and tells the room when it has buffered and when the track ends.
+// timeline, and tells the room when it has buffered and when the track ends. With audio on every
+// phone it is mounted there too as a `follower`: same clock, tighter sync, and nothing reported.
 import { useEffect, useMemo, useState } from 'react';
 import type { RoomView } from '../../../../packages/core/src/protocol.ts';
 import { useEngine, useFollow } from '../lib/playback.ts';
@@ -16,9 +17,10 @@ type Props = {
   guide?: boolean;
   onEngine?: (e: Engine | null) => void;
   className?: string;
+  follower?: boolean;
 };
 
-export function RoomAudio({ view, serverNow, emit, stage, volume = 1, guide = true, onEngine, className }: Props) {
+export function RoomAudio({ view, serverNow, emit, stage, volume = 1, guide = true, onEngine, className, follower }: Props) {
   const c = view.current;
   const song = c && (view.phase === 'announce' || view.phase === 'playing') ? c.song : null;
   const [videoEl, setVideoEl] = useState<HTMLDivElement | null>(null);
@@ -50,15 +52,15 @@ export function RoomAudio({ view, serverNow, emit, stage, volume = 1, guide = tr
   // Tell the room this device is ready, with the real length of the track.
   const entryId = c?.entryId;
   useEffect(() => {
-    if (engine && entryId && view.phase === 'announce') void emit('stageReady', { entryId, duration: duration || undefined });
-  }, [engine, entryId, view.phase, duration, emit]);
+    if (engine && entryId && view.phase === 'announce' && !follower) void emit('stageReady', { entryId, duration: duration || undefined });
+  }, [engine, entryId, view.phase, duration, emit, follower]);
   useEffect(() => {
-    if (!engine || !entryId) return;
+    if (!engine || !entryId || follower) return;
     engine.onEnded = () => void emit('stageEnded', { entryId });
-  }, [engine, entryId, emit]);
+  }, [engine, entryId, emit, follower]);
 
   const timeline = useMemo(() => (view.phase === 'playing' ? c?.timeline ?? null : null), [view.phase, c?.timeline]);
-  useFollow(engine, timeline, serverNow, view.phase === 'playing');
+  useFollow(engine, timeline, serverNow, view.phase === 'playing', follower ? 0.15 : undefined);
   useEffect(() => {
     if (view.phase !== 'playing' && engine?.playing()) engine.pause();
   }, [view.phase, engine]);

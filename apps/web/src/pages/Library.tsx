@@ -159,7 +159,7 @@ export default function Library() {
               <p className="result-count" aria-live="polite">{res.total.toLocaleString()} {res.total === 1 ? 'song' : 'songs'}</p>
               <Shelf songs={res.songs} empty={sp.get('field') === 'lyrics' ? 'No lyrics match. Lyric search covers house band songs and every song whose synced lyrics Croon has fetched.' : 'No songs match. Try fewer words or another filter.'} />
               {res.songs.length < res.total && <div className="more"><Key onClick={more}>Load more</Key></div>}
-              {sp.get('q') && <FindAnySong key={sp.get('q')} initial={sp.get('q') ?? ''} />}
+              {sp.get('q') && <FindAnySong key={sp.get('q')} initial={sp.get('q') ?? ''} auto={res.total < 5} />}
             </>
           )}
           {!crate && !searching && home && (

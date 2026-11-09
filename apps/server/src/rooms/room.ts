@@ -7,7 +7,7 @@ import { MODES, withParts, type ModeId } from '../../../../packages/core/src/mod
 import { stopped, play, pause, seek, positionAt } from '../../../../packages/core/src/timeline.ts';
 import { parseLrc, parseUltrastar, targets, mapLyrics, type Anchor, type Lyrics } from '../../../../packages/core/src/lyrics.ts';
 import { scoreFull, scoreLite, maxFrames, type Frame, type Score } from '../../../../packages/core/src/scoring.ts';
-import { DEFAULT_SETTINGS, type Avatar, type Participant, type Performance, type Phase, type RoomSettings, type RoomView, type SongMeta } from '../../../../packages/core/src/protocol.ts';
+import { DEFAULT_SETTINGS, type Avatar, type MicStatus, type Participant, type Performance, type Phase, type RoomSettings, type RoomView, type SongMeta } from '../../../../packages/core/src/protocol.ts';
 
 export type Clock = { now(): number; set(fn: () => void, ms: number): unknown; clear(h: unknown): void };
 export const realClock: Clock = { now: () => Date.now(), set: (fn, ms) => setTimeout(fn, ms), clear: (h) => clearTimeout(h as NodeJS.Timeout) };
@@ -98,7 +98,7 @@ export class Room {
     const token = isHost ? o.token! : randomBytes(24).toString('base64url');
     const pid = randomUUID().slice(0, 8);
     this.participants.set(pid, {
-      pid, name: o.stage ? 'Stage' : o.name, avatar: o.avatar, role: o.stage ? 'stage' : isHost ? 'host' : 'guest', connected: true, team: null,
+      pid, name: o.stage ? 'Stage' : o.name, avatar: o.avatar, role: o.stage ? 'stage' : isHost ? 'host' : 'guest', connected: true, team: null, mic: 'pending',
       username: o.username, tokenHash: digest(token), userId: o.userId, sockets: 1,
     });
     if (isHost) {
@@ -135,6 +135,11 @@ export class Room {
   private requireHost(pid: string) {
     if (!this.isHost(pid)) throw new RoomError('Only the host can do that.');
   }
+  /** Who can be given a part: not the stage, and not the host when the host device is only the screen (always so at events). */
+  private sings = (pid: string) => {
+    const p = this.participants.get(pid);
+    return !!p && p.role !== 'stage' && !(p.role === 'host' && (this.kind === 'event' || this.settings.hostRole === 'screen'));
+  };
   private touch() {
     this.lastActive = this.deps.clock.now();
   }
@@ -184,6 +189,15 @@ export class Room {
     return action === 'kick' ? pid : null;
   }
 
+  /** A phone reports its mic setup. Trusted as told: it gates the start, it never touches a score. */
+  micStatus(by: string, status: MicStatus) {
+    const m = this.member(by);
+    if (m.role === 'stage') throw new RoomError('The stage screen does not sing.');
+    if (m.mic === status) return;
+    m.mic = status;
+    this.changed();
+  }
+
   updateSettings(by: string, s: Partial<RoomSettings>) {
     this.requireHost(by);
     this.settings = { ...this.settings, ...s };
@@ -214,11 +228,12 @@ export class Room {
 
     let singers = o.singers?.length ? o.singers : [by];
     if (mode.id === 'roulette') {
-      const pool = [...this.participants.values()].filter((p) => p.role !== 'stage' && p.connected && !(this.kind === 'event' && p.role === 'host'));
+      const pool = [...this.participants.values()].filter((p) => p.connected && this.sings(p.pid));
       if (!pool.length) throw new RoomError('Nobody here to spin for.');
       singers = [pool[Math.floor(Math.random() * pool.length)].pid];
     }
-    singers = [...new Set(singers)].filter((p) => this.participants.has(p) && this.participants.get(p)!.role !== 'stage');
+    if (mode.id !== 'group' && singers.some((p) => this.isHost(p) && !this.sings(p))) throw new RoomError('The host is only running the screen tonight, so they cannot sing.');
+    singers = [...new Set(singers)].filter(this.sings);
     if (mode.id !== 'group' && (singers.length < mode.singers[0] || singers.length > mode.singers[1])) {
       throw new RoomError(mode.singers[0] === mode.singers[1] ? `${mode.name} needs ${mode.singers[0]} singer${mode.singers[0] > 1 ? 's' : ''}.` : `${mode.name} needs ${mode.singers[0]} to ${mode.singers[1]} singers.`);
     }
@@ -260,9 +275,12 @@ export class Room {
     const c = this.current;
     switch (action) {
       case 'start':
-      case 'next':
+      case 'next': {
         if (this.phase === 'announce' || this.phase === 'playing') throw new RoomError('A song is already on.');
+        const waiting = this.nextUp()?.waiting ?? [];
+        if (waiting.length) throw new RoomError(`Waiting for ${waiting.map((p) => this.participants.get(p)?.name ?? 'a singer').join(' and ')} to set up their mic.`);
         return this.startNext();
+      }
       case 'play':
         if (!c || this.phase !== 'playing') throw new RoomError('Nothing is playing.');
         if (!c.timeline.playing) c.timeline = play(c.timeline, now, 600);
@@ -297,10 +315,7 @@ export class Room {
     const { song, lyricsText } = this.songs.get(e.id)!;
     this.songs.delete(e.id);
     this.clearTimers();
-    let singers = e.singers;
-    if (e.mode === 'group') {
-      singers = [...this.participants.values()].filter((p) => p.role !== 'stage' && p.connected && !(this.kind === 'event' && p.role === 'host')).map((p) => p.pid);
-    }
+    const singers = this.singersFor(e);
     this.current = {
       entryId: e.id, song, mode: e.mode as ModeId, singers, timeline: stopped(0), lyricAnchors: song.sources[0]?.kind === 'youtube' ? song.sources[0].lyricAnchors ?? [] : [], lyricsText,
       skipVotes: [], cheers: 0, scores: {}, result: null, frames: new Map(), timers: [], lyrics: null, awaitingFrames: new Set(),
@@ -311,6 +326,22 @@ export class Room {
     }).catch(() => {});
     this.timer(() => this.awaitReady(), ANNOUNCE_MS);
     this.changed();
+  }
+
+  /** Group: everyone connected who can sing. Other modes: who was queued, minus a host who has since become the screen. */
+  private singersFor(e: QueueEntry) {
+    if (e.mode !== 'group') return e.singers.filter(this.sings);
+    return [...this.participants.values()].filter((p) => p.connected && this.sings(p.pid)).map((p) => p.pid);
+  }
+
+  /** The next song's singers and, when it is scored, those whose mic is not set up yet (or who are away). */
+  private nextUp(): RoomView['next'] {
+    const e = this.queue[0];
+    if (!e) return null;
+    const singers = this.singersFor(e);
+    const needsMic = this.settings.scoring && this.songs.get(e.id)!.song.scoring !== 'none';
+    const waiting = needsMic ? singers.filter((p) => !this.participants.get(p)?.connected || this.participants.get(p)!.mic !== 'ready') : [];
+    return { singers, needsMic, waiting };
   }
 
   private readyFor: string | null = null;
@@ -425,8 +456,10 @@ export class Room {
     const id = this.current?.entryId;
     this.timer(() => {
       if (this.current?.entryId === id && this.phase === 'results') {
-        if (this.queue.length) this.startNext();
-        else {
+        // Next singers without a mic set up: stay on the results until the host starts it.
+        if (this.queue.length) {
+          if (!this.nextUp()?.waiting.length) this.startNext();
+        } else {
           this.phase = 'lobby';
           this.current = null;
           this.changed();
@@ -482,7 +515,7 @@ export class Room {
     const hide = c && MODES[c.mode].hidesSong && this.phase !== 'results';
     return {
       code: this.code, name: this.name, description: this.description, kind: this.kind, hostPid: this.hostPid, settings: this.settings,
-      participants: [...this.participants.values()].map(({ pid, name, avatar, role, connected, team, username }) => ({ pid, name, avatar, role, connected, team, username })),
+      participants: [...this.participants.values()].map(({ pid, name, avatar, role, connected, team, username, mic }) => ({ pid, name, avatar, role, connected, team, username, mic })),
       queue: this.queue.map((e) => {
         const s = this.songs.get(e.id)!.song;
         return { id: e.id, song: MODES[e.mode as ModeId].hidesSong ? blind(s) : s, addedBy: e.addedBy, singers: e.singers, mode: e.mode as ModeId, votes: e.votes };
@@ -492,6 +525,7 @@ export class Room {
         entryId: c.entryId, song: hide ? blind(c.song) : c.song, mode: c.mode, singers: c.singers, timeline: c.timeline, lyricAnchors: c.lyricAnchors,
         lyricsText: c.lyricsText ?? null, skipVotes: c.skipVotes, cheers: c.cheers, scores: c.scores, result: c.result ?? null,
       } : null,
+      next: this.nextUp(),
       board: [...this.board].map(([pid, b]) => ({ pid, name: this.participants.get(pid)?.name ?? 'Gone', avatar: this.participants.get(pid)?.avatar ?? { glyph: 'mic', color: '#f2e8dc' }, ...b })).sort((a, b) => b.best - a.best),
       teams: { ...this.teams },
       serverNow: this.deps.clock.now(),

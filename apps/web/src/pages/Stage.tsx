@@ -8,7 +8,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { Maximize, Volume2 } from 'lucide-react';
 import { MODES, withParts } from '../../../../packages/core/src/modes.ts';
 import { positionAt } from '../../../../packages/core/src/timeline.ts';
-import { mapLyrics, targets } from '../../../../packages/core/src/lyrics.ts';
+import { mapLyrics, targets, stageShowsLyrics } from '../../../../packages/core/src/lyrics.ts';
 import type { LiveMsg, Participant } from '../../../../packages/core/src/protocol.ts';
 import { useRoom } from '../lib/room.ts';
 import { useSongLyrics, DEFAULT_PREFS } from '../lib/lyrics.ts';
@@ -91,7 +91,9 @@ export default function Stage() {
   const person = (pid: string) => view.participants.find((p) => p.pid === pid);
   const singers = c ? (c.singers.map(person).filter(Boolean) as Participant[]) : [];
   const isVideo = c?.song.sources[0]?.kind === 'youtube';
-  const sideLyrics = isVideo && view.settings.stageLyricsWithVideo;
+  // Karaoke and lyric videos carry their own words: Croon's would only double them.
+  const showLyrics = !!c && stageShowsLyrics(c.song, view.settings.stageLyricsWithVideo);
+  const sideLyrics = isVideo && showLyrics;
   const trailList = singers.map((s) => trails.current.get(s.pid) ?? []);
   const upNext = view.queue.slice(0, 3);
   const name = (pid: string) => person(pid)?.name ?? 'Someone';
@@ -142,7 +144,7 @@ export default function Stage() {
           )}
           {view.phase === 'playing' && c && (
             <motion.div key={`p-${c.entryId}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={isVideo ? { display: 'contents' } : undefined}>
-              {(!isVideo || sideLyrics) && (
+              {showLyrics && (
                 <div>
                   {ts.length > 0 && trailList.length > 0 && <PitchLane targets={ts} pos={getPos} trails={trailList} colors={['#2ec4b6', '#ff4f2e', '#ffc23d', '#b388eb']} />}
                   {lyrics ? <Lyrics lyrics={lyrics} pos={getPos} prefs={{ ...DEFAULT_PREFS, style: isVideo ? 'line' : lyrics.wordTimed ? 'classic' : 'line', size: 1 }} parts={!!MODES[c.mode].parts} variant="stage" />

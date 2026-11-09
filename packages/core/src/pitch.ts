@@ -3,6 +3,12 @@
 
 export type Pitch = { freq: number; clarity: number } | null;
 
+/**
+ * How far back a reading's sound lies, as a fraction of the window: YIN only names a new note once
+ * about 85% of the window holds it (measured 0.80 to 0.97 on note changes), not at the halfway mark.
+ */
+export const PITCH_LAG = 0.85;
+
 export function yin(buf: Float32Array, sampleRate: number, threshold = 0.15, minHz = 70, maxHz = 1100): Pitch {
   const maxTau = Math.min(Math.floor(sampleRate / minHz), buf.length >> 1);
   const minTau = Math.max(2, Math.floor(sampleRate / maxHz));

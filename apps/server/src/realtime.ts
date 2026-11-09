@@ -191,6 +191,7 @@ export function attachRealtime(http: HttpServer) {
     on('stageReady', (d) => r().stageReady(p(), d.entryId, d.duration));
     on('stageEnded', (d) => r().stageEnded(p(), d.entryId));
     on('frames', (d) => r().frames(p(), d.entryId, d.frames));
+    on('micStatus', (d) => r().micStatus(p(), d.status));
     on('roulette', () => ({ ok: true, id: r().queueAdd(p(), { songKey: 'random', mode: 'roulette' }).id }));
     on('participant', (d) => {
       const kicked = r().participantAction(p(), d.pid, d.action, d.team);

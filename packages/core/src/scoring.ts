@@ -64,6 +64,25 @@ function pitchAt(frames: Frame[], ts: Target[], shift: number) {
 // Nearest-to-zero first, so ties keep the uncorrected timing.
 const OFFSETS = Array.from({ length: 17 }, (_, i) => -0.4 + i * 0.05).sort((a, b) => Math.abs(a) - Math.abs(b));
 
+/**
+ * The 50 ms grid only gets the latency roughly right, and long notes leave it a flat plateau.
+ * Note changes are sharp: the median gap between each new note and the first frame that hears it,
+ * less half a frame (on average a frame lands half an interval after a change), is the latency to 1 ms.
+ */
+function refineShift(frames: Frame[], ts: Target[], shift: number) {
+  const gaps: number[] = [];
+  ts.forEach((n, i) => {
+    const prev = ts[i - 1];
+    if (!prev || pcDistance(prev.note, n.note) < 1) return;
+    const f = between(frames, n.t - 0.1, n.t + Math.min(n.d, 0.2), shift).find((x) => x[1] !== null && pcDistance(x[1], n.note) <= 0.5);
+    if (f) gaps.push(f[0] - n.t);
+  });
+  if (gaps.length < 4) return shift;
+  const step = frames.slice(1).map((f, i) => f[0] - frames[i][0]).sort((a, b) => a - b)[frames.length >> 1] ?? 0;
+  const late = gaps.sort((a, b) => a - b)[gaps.length >> 1] - step / 2;
+  return Math.max(-0.4, Math.min(0.4, -late));
+}
+
 /** Full scoring against pitch targets. */
 export function scoreFull(frames: Frame[], ts: Target[]): Score {
   frames = [...frames].sort((a, b) => a[0] - b[0]);
@@ -75,6 +94,7 @@ export function scoreFull(frames: Frame[], ts: Target[]): Score {
       shift = s;
     }
   }
+  shift = refineShift(frames, ts, shift);
   const per = pitchAt(frames, ts, shift);
   const pitch = mean(per);
 

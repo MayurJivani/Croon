@@ -1,6 +1,6 @@
 // Game modes. A mode decides who sings, what the room sees, and how a performance resolves.
 // Adding a mode means adding one entry here; rooms, queue and stage read only this shape.
-import type { Lyrics } from './lyrics.ts';
+import { lineText, sungEnd, type Line, type Lyrics } from './lyrics.ts';
 
 export type ModeId = 'solo' | 'duet' | 'battle' | 'group' | 'challenge' | 'blind' | 'roulette' | 'team';
 
@@ -56,10 +56,28 @@ export const MODES: Record<ModeId, Mode> = {
 };
 
 /**
- * Gives a duet its parts. Lines already marked (UltraStar P1/P2) keep theirs; otherwise lines
- * alternate and the final line is sung together.
+ * Gives a duet its parts. Lines already marked (UltraStar P1/P2) keep theirs; P3, or the same line
+ * written under both singers, is sung together. Unmarked songs hand over by verse: a pause of 3 s
+ * or more, or four lines in a row, passes to the other singer, and the final line is sung together.
  */
 export function withParts(l: Lyrics): Lyrics {
-  if (l.lines.some((x) => x.part)) return l;
-  return { ...l, lines: l.lines.map((x, i) => ({ ...x, part: i === l.lines.length - 1 ? 0 : (i % 2) + 1 })) };
+  if (l.lines.some((x) => x.part)) {
+    const out: Line[] = [];
+    for (const x of l.lines) {
+      const twin = out.find((y) => y.part && y.part !== x.part && Math.abs(y.t - x.t) < 0.05 && lineText(y) === lineText(x));
+      if (twin) twin.part = 0;
+      else out.push({ ...x, part: x.part > 2 ? 0 : x.part });
+    }
+    return { ...l, lines: out };
+  }
+  let part = 1, run = 0;
+  let lines = l.lines.map((x, i) => {
+    const prev = l.lines[i - 1];
+    if (prev && (run >= 4 || x.t - sungEnd(prev, l.wordTimed) >= 3)) [part, run] = [3 - part, 0];
+    run++;
+    return { ...x, part: i && i === l.lines.length - 1 ? 0 : part };
+  });
+  // A song too short to hand over still gives the second singer lines of their own.
+  if (!lines.some((x) => x.part === 2)) lines = l.lines.map((x, i) => ({ ...x, part: i && i === l.lines.length - 1 ? 0 : (i % 2) + 1 }));
+  return { ...l, lines };
 }

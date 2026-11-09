@@ -14,6 +14,7 @@ for (const line of existsSync(envFile) ? readFileSync(envFile, 'utf8').split('\n
 process.env.NODE_ENV = 'test';
 process.env.WARM_LYRICS = '0';
 process.env.LOG_LEVEL = 'silent';
+process.env.YOUTUBE_API_KEY ||= 'test-only'; // video search is answered by a stub below, never by Google
 
 const { io: client } = await import('socket.io-client');
 const { createApp } = await import('../src/app.ts');
@@ -82,7 +83,7 @@ async function advance(ms: number) {
   await new Promise((r) => setTimeout(r, 60));
 }
 
-type View = { phase: string; queue: { id: string; song: { key: string } }[]; current: { entryId: string; timeline: { playing: boolean; anchorAt: number; anchorPos: number }; scores: Record<string, { total: number; kind: string }>; result: unknown; skipVotes: string[] } | null; participants: { pid: string; role: string; connected: boolean }[]; board: { pid: string; best: number }[] };
+type View = { phase: string; hostPid: string; queue: { id: string; song: { key: string } }[]; current: { entryId: string; singers: string[]; song: { title: string; duration: number }; timeline: { playing: boolean; anchorAt: number; anchorPos: number }; scores: Record<string, { total: number; kind: string }>; result: unknown; skipVotes: string[] } | null; participants: { pid: string; role: string; connected: boolean; mic: string }[]; next: { singers: string[]; needsMic: boolean; waiting: string[] } | null; board: { pid: string; best: number }[] };
 
 function connect(cookie = '') {
   const s = client(base, { transports: ['websocket'], extraHeaders: { cookie }, forceNew: true });
@@ -121,6 +122,8 @@ test('library: search by title, artist, lyrics; filters; song page', async () =>
   await a.init();
   const s1 = await a.call('GET', '/api/songs/search?q=amazing&field=title');
   assert.equal(s1.body.songs[0].key, 'hb:amazing-grace');
+  const s0 = await a.call('GET', '/api/songs/search?q=clementine&playable=1');
+  assert.equal(s0.body.songs[0].key, 'hb:clementine', 'a title match beats a popular song that only has the word in its lyrics');
   const s2 = await a.call('GET', '/api/songs/search?q=wretch%20like%20me&field=lyrics');
   assert.equal(s2.body.songs[0].key, 'hb:amazing-grace', 'lyric search finds house band text');
   const s3 = await a.call('GET', '/api/songs/search?q=arijit&field=artist&playable=1');
@@ -131,6 +134,7 @@ test('library: search by title, artist, lyrics; filters; song page', async () =>
   assert.ok(home.body.trending.length > 0 && home.body.crates.length > 5 && home.body.weekly.song);
   const page = await a.call('GET', '/api/songs/hb:silent-night');
   assert.equal(page.body.song.scoring, 'full');
+  assert.equal((await a.call('GET', '/api/songs/dz:531950')).body.song.hasBurnedLyrics, true, 'a karaoke video brings its own lyrics');
   assert.ok(page.body.rights);
   assert.equal((await a.call('GET', '/api/songs/dz:nope')).status, 404);
 });
@@ -167,6 +171,19 @@ test('room: four clients, fair queue, shared timeline, server scoring, late join
   assert.equal((await a.emit('queueAdd', { songKey: 'dz:999', mode: 'solo' })).error, 'Song not found.');
   await settle();
   assert.deepEqual(stage.state.view!.queue.map((q) => q.song.key), ['hb:twinkle-twinkle', 'hb:jingle-bells', 'hb:clementine']);
+
+  // Start waits for the next singer's mic; only the host can start, even once everyone is ready.
+  await settle();
+  assert.deepEqual(stage.state.view!.next, { singers: [annPid], needsMic: true, waiting: [annPid] });
+  assert.equal((await host.emit('control', { action: 'start' })).error, 'Waiting for Ann to set up their mic.');
+  await a.emit('micStatus', { status: 'calibrating' });
+  assert.equal((await host.emit('control', { action: 'start' })).error, 'Waiting for Ann to set up their mic.', 'calibrating is not ready');
+  assert.ok((await a.emit('micStatus', { status: 'ready' })).ok);
+  assert.equal((await stage.emit('micStatus', { status: 'ready' })).error, 'The stage screen does not sing.');
+  await settle();
+  assert.deepEqual(stage.state.view!.next!.waiting, []);
+  assert.equal(stage.state.view!.participants.find((p) => p.pid === annPid)!.mic, 'ready');
+  assert.equal((await b.emit('control', { action: 'start' })).error, 'Only the host can do that.');
 
   // Start: announce, then the house band begins on a shared timeline.
   assert.ok((await host.emit('control', { action: 'start' })).ok);
@@ -216,7 +233,9 @@ test('room: four clients, fair queue, shared timeline, server scoring, late join
   assert.equal(saved.length, 1, 'a signed-in singer\'s room score is kept');
 
   // Next song is Bob's; the room votes it off. Bob cannot vote on his own song.
-  await host.emit('control', { action: 'next' });
+  assert.match((await host.emit('control', { action: 'next' })).error!, /^Waiting for Bob/, 'the next singer needs a mic too');
+  await b.emit('micStatus', { status: 'ready' });
+  assert.ok((await host.emit('control', { action: 'next' })).ok);
   await advance(5300);
   assert.equal(stage.state.view!.current!.entryId !== entryId, true);
   assert.equal((await b.emit('skipVote')).error, 'Singers can stop by asking the host.');
@@ -231,6 +250,207 @@ test('room: four clients, fair queue, shared timeline, server scoring, late join
   await settle();
   assert.equal(c.state.kicked, true);
   assert.ok(!stage.state.view!.participants.some((p) => p.pid === cPid));
+});
+
+test('room modes: duet parts, battle, group, blind, team, permissions, stage handshake, auto-advance', async () => {
+  const { withParts } = await import('../../../packages/core/src/modes.ts');
+  const { room, hostToken } = createRoom({ name: 'Modes night', kind: 'party' }, clock);
+  const host = connect(), a = connect(), b = connect(), stage = connect();
+  const jh = await host.emit('join', { code: room.code, name: 'Host', avatar, token: hostToken });
+  const ja = await a.emit('join', { code: room.code, name: 'Ann', avatar });
+  const jb = await b.emit('join', { code: room.code, name: 'Bob', avatar });
+  const [hostPid, annPid, bobPid] = [jh.pid, ja.pid, jb.pid] as string[];
+  const v = () => stage.state.view!;
+  /** Perfect frames for one part of a house song (0 = every line). */
+  const perfect = (slug: string, part = 0, parts = false) => {
+    const l = compile(houseSong(slug)!).lyrics;
+    const fr: [number, number][] = [];
+    for (const n of targets(parts ? withParts(l) : l, part)) for (let x = n.t; x < n.t + n.d; x += 0.05) fr.push([x, n.note]);
+    return fr;
+  };
+  const play = async () => {
+    assert.ok((await host.emit('control', { action: 'next' })).ok);
+    await advance(5300);
+    assert.equal(v().phase, 'playing');
+    return v().current!.entryId;
+  };
+
+  // Guests cannot steer the room.
+  for (const [ev, d] of [['control', { action: 'pause' }], ['settings', { scoring: false }], ['participant', { pid: annPid, action: 'kick' }], ['lyricAnchors', { anchors: [] }]] as const) {
+    assert.equal((await a.emit(ev, d)).error, 'Only the host can do that.', ev);
+  }
+  // The stage screen joins but cannot queue or host.
+  await stage.emit('join', { code: room.code, name: 'Stage', avatar, stage: true });
+  assert.equal((await stage.emit('queueAdd', { songKey: 'hb:clementine', mode: 'solo' })).error, 'The stage screen cannot queue songs.');
+  const stagePid = v().participants.find((p) => p.role === 'stage')!.pid;
+  assert.equal((await host.emit('participant', { pid: stagePid, action: 'promote' })).error, 'The stage screen cannot host.');
+  // Mode rules: a duet needs exactly two, garbage is refused before the room sees it.
+  assert.match((await a.emit('queueAdd', { songKey: 'hb:clementine', mode: 'duet' })).error!, /needs 2 singers/);
+  assert.ok((await a.emit('queueAdd', { songKey: 'hb:nope', mode: 'karaoke' })).error);
+
+  // Duet: both singers must be ready before the host can start; each is scored on their own lines only.
+  assert.ok((await a.emit('queueAdd', { songKey: 'hb:clementine', mode: 'duet', singers: [annPid, bobPid] })).ok);
+  await a.emit('micStatus', { status: 'ready' });
+  assert.equal((await host.emit('control', { action: 'next' })).error, 'Waiting for Bob to set up their mic.');
+  await b.emit('micStatus', { status: 'ready' });
+  await host.emit('micStatus', { status: 'ready' }); // for the group song later
+  let id = await play();
+  assert.deepEqual(v().current!.singers, [annPid, bobPid]);
+  await a.emit('frames', { entryId: id, frames: perfect('clementine', 1, true), calibrated: true });
+  await b.emit('frames', { entryId: id, frames: perfect('clementine', 2, true), calibrated: true });
+  assert.ok((await host.emit('frames', { entryId: id, frames: perfect('clementine'), calibrated: true })).ok, 'a non-singer is ignored, not an error');
+  await stage.emit('stageEnded', { entryId: id });
+  await settle();
+  assert.equal(v().phase, 'results');
+  assert.ok(v().current!.scores[annPid].total >= 90 && v().current!.scores[bobPid].total >= 90, JSON.stringify(v().current!.scores));
+  assert.ok(!v().current!.scores[hostPid], 'the host did not sing');
+  assert.match((v().current!.result as { headline: string }).headline, /^Together/);
+
+  // Battle: the better singer wins.
+  assert.ok((await b.emit('queueAdd', { songKey: 'hb:jingle-bells', mode: 'battle', singers: [bobPid, annPid] })).ok);
+  id = await play();
+  await a.emit('frames', { entryId: id, frames: perfect('jingle-bells'), calibrated: true });
+  await b.emit('frames', { entryId: id, frames: perfect('jingle-bells').map(([t, m]) => [t, m + 3]), calibrated: true });
+  await stage.emit('stageEnded', { entryId: id });
+  await settle();
+  assert.deepEqual((v().current!.result as { winners: string[] }).winners, [annPid], JSON.stringify(v().current!.scores));
+
+  // Group: everyone connected sings, the stage does not.
+  assert.ok((await a.emit('queueAdd', { songKey: 'hb:twinkle-twinkle', mode: 'group' })).ok);
+  await play();
+  assert.deepEqual(new Set(v().current!.singers), new Set([hostPid, annPid, bobPid]));
+  await host.emit('control', { action: 'skip' });
+  await settle();
+  assert.equal((v().current!.result as { headline: string }).headline, 'Skipped');
+
+  // Audio output and host role are the host's to set, and every device sees them.
+  for (const d of [{ audioOut: 'all' }, { hostRole: 'screen' }]) assert.equal((await a.emit('settings', d)).error, 'Only the host can do that.');
+  assert.ok((await a.emit('settings', { audioOut: 'everywhere' })).error, 'unknown values are refused');
+  await settle();
+  assert.deepEqual([(v() as unknown as { settings: { audioOut: string; hostRole: string } }).settings.audioOut, (v() as unknown as { settings: { hostRole: string } }).settings.hostRole], ['stage', 'singer']);
+  assert.ok((await host.emit('settings', { audioOut: 'all', hostRole: 'screen' })).ok);
+  await settle();
+  assert.equal((a.state.view as unknown as { settings: { audioOut: string } }).settings.audioOut, 'all', 'broadcast to the phones');
+  // A screen-only host gets no part: not in a duet, not in the group, not in the start gate.
+  await host.emit('micStatus', { status: 'pending' });
+  assert.equal((await a.emit('queueAdd', { songKey: 'hb:silent-night', mode: 'duet', singers: [annPid, hostPid] })).error, 'The host is only running the screen tonight, so they cannot sing.');
+  assert.ok((await a.emit('queueAdd', { songKey: 'hb:jingle-bells', mode: 'group' })).ok);
+  await settle();
+  assert.deepEqual(new Set(v().next!.singers), new Set([annPid, bobPid]));
+  assert.deepEqual(v().next!.waiting, [], 'the host has no mic to set up');
+  await play();
+  assert.deepEqual(new Set(v().current!.singers), new Set([annPid, bobPid]));
+  await host.emit('control', { action: 'skip' });
+  await host.emit('settings', { audioOut: 'stage', hostRole: 'singer' });
+  await host.emit('micStatus', { status: 'ready' });
+
+  // Blind: title and artist stay hidden in the queue and on stage until the results.
+  assert.ok((await b.emit('queueAdd', { songKey: 'hb:silent-night', mode: 'blind' })).ok);
+  await settle();
+  assert.equal((a.state.view!.queue[0].song as { title?: string }).title, 'Mystery tape');
+  id = await play();
+  assert.equal((v().current!.song as { title?: string }).title, 'Mystery tape');
+  await stage.emit('stageEnded', { entryId: id });
+  await advance(7100); // nobody sends frames: the room stops waiting
+  assert.equal(v().phase, 'results');
+  assert.notEqual((v().current!.song as { title?: string }).title, 'Mystery tape', 'revealed at the results');
+
+  // Team battle: scores add to the singer's team.
+  await host.emit('participant', { pid: annPid, action: 'team', team: 'A' });
+  assert.ok((await a.emit('queueAdd', { songKey: 'hb:amazing-grace', mode: 'team' })).ok);
+  id = await play();
+  await a.emit('frames', { entryId: id, frames: perfect('amazing-grace'), calibrated: true });
+  await stage.emit('stageEnded', { entryId: id });
+  await settle();
+  assert.ok((v() as unknown as { teams: { A: number; B: number } }).teams.A >= 90);
+
+  // Auto-advance: results roll on to the next song after 15 s.
+  await host.emit('settings', { autoAdvance: true });
+  assert.ok((await b.emit('queueAdd', { songKey: 'hb:twinkle-twinkle', mode: 'solo' })).ok);
+  assert.ok((await a.emit('queueAdd', { songKey: 'hb:clementine', mode: 'solo' })).ok);
+  id = await play();
+  await host.emit('control', { action: 'skip' });
+  await advance(15_100);
+  assert.equal(v().phase, 'announce', 'the next song started by itself');
+  assert.notEqual(v().current!.entryId, id);
+  await host.emit('control', { action: 'end' });
+
+  // Host hands over; the old host loses control, the new one has it.
+  assert.ok((await host.emit('participant', { pid: bobPid, action: 'promote' })).ok);
+  assert.equal((await host.emit('control', { action: 'next' })).error, 'Only the host can do that.');
+  await settle();
+  assert.equal(v().hostPid, bobPid);
+  // The host's phone dropping does not end the room; a reconnect with the token keeps the seat.
+  b.s.disconnect();
+  await settle();
+  assert.equal(v().participants.find((p) => p.pid === bobPid)!.connected, false);
+  const b2 = connect();
+  assert.equal((await b2.emit('join', { code: room.code, name: 'Bob', avatar, token: jb.token })).pid, bobPid);
+  assert.equal(room.hostPid, bobPid);
+});
+
+test('room: a guest file waits for the stage to buffer and uses its real length', async () => {
+  const { room, hostToken } = createRoom({ name: 'Files', kind: 'party' }, clock);
+  const host = connect(), stage = connect();
+  const jh = await host.emit('join', { code: room.code, name: 'Host', avatar, token: hostToken });
+  await stage.emit('join', { code: room.code, name: 'Stage', avatar, stage: true });
+  const fileId = room.addFile(jh.pid as string, Buffer.from('fake'), 'audio/mpeg', 'mine.mp3');
+  assert.ok((await host.emit('queueAdd', { songKey: `file:${fileId}`, mode: 'solo', lyricsText: '[00:01.00]hello\n[00:05.00]world' })).ok);
+  await host.emit('micStatus', { status: 'ready' });
+  await host.emit('control', { action: 'start' });
+  await advance(5300);
+  assert.equal(stage.state.view!.phase, 'announce', 'still buffering');
+  const entryId = stage.state.view!.current!.entryId;
+  await host.emit('stageReady', { entryId, duration: 93 });
+  await settle();
+  assert.equal(stage.state.view!.phase, 'announce', 'the host is not the audio device while a stage is on');
+  await stage.emit('stageReady', { entryId, duration: 93 });
+  await settle();
+  assert.equal(stage.state.view!.phase, 'playing');
+  assert.equal(stage.state.view!.current!.song.duration, 93);
+  // A stage that never reports the end: the backstop finishes the song.
+  await advance(93_000 + 1300 + 4100);
+  assert.equal(stage.state.view!.phase, 'results');
+});
+
+test('room seeding: only a signed-in user brings a new song in, and it can be queued straight away', async () => {
+  const DZ = '987650001';
+  const stub: Record<string, unknown> = {
+    [`https://api.deezer.com/track/${DZ}`]: { id: Number(DZ), title: 'Seeded Test Song', duration: 180, rank: 1, artist: { id: 5, name: 'Test Seeder' }, album: { id: 77 } },
+    'https://api.deezer.com/album/77': { id: 77, title: 'Seeds', release_date: '2020-01-01', genres: { data: [{ name: 'Pop' }] } },
+    'https://www.googleapis.com/': { items: [{ id: { videoId: 'seedVideo01' }, snippet: { title: 'Seeded Test Song (Karaoke Version)', channelTitle: 'Sing King' } }] },
+    'https://www.youtube.com/oembed': { title: 'Seeded Test Song (Karaoke Version)', author_name: 'Sing King' },
+  };
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (url: string | URL, init?: RequestInit) => {
+    const u = String(url);
+    if (u.startsWith(base)) return real(url, init);
+    const hit = Object.keys(stub).find((k) => u.startsWith(k));
+    return hit ? new Response(JSON.stringify(stub[hit])) : new Response('not found', { status: 404 });
+  }) as typeof fetch;
+  try {
+    const guest = agent();
+    await guest.init();
+    assert.equal((await guest.call('POST', '/api/songs/import', { deezerId: DZ })).status, 401, 'a guest who is not signed in is refused');
+
+    const u = agent();
+    await u.init();
+    await u.call('POST', '/api/auth/register', { username: 'test_seeder', password: 'seed-the-stage-7' });
+    const imp = await u.call('POST', '/api/songs/import', { deezerId: DZ });
+    assert.equal(imp.status, 201, JSON.stringify(imp.body));
+    assert.equal(imp.body.found.video, 'attached');
+
+    const { room } = createRoom({ name: 'Seed night', kind: 'party' }, clock);
+    const s = connect(u.cookie());
+    assert.ok((await s.emit('join', { code: room.code, name: 'Seeder', avatar })).ok);
+    assert.ok((await s.emit('queueAdd', { songKey: `dz:${DZ}`, mode: 'solo' })).ok, 'the new song queues in the room');
+    await settle();
+    assert.equal(s.state.view!.queue[0].song.key, `dz:${DZ}`);
+  } finally {
+    globalThis.fetch = real;
+    await sql`delete from song_sources where song_key = ${`dz:${DZ}`}`;
+    await sql`delete from extra_songs where deezer_id = ${DZ}`;
+  }
 });
 
 test('events: organiser creates, reopens as host, public page shows the board', async () => {

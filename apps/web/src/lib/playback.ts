@@ -37,7 +37,7 @@ export function useEngine(song: SongMeta | null, o: { videoEl: HTMLElement | nul
 }
 
 /** Makes an audio device follow the room's timeline. */
-export function useFollow(engine: Engine | null, timeline: Timeline | null, serverNow: () => number, active: boolean) {
+export function useFollow(engine: Engine | null, timeline: Timeline | null, serverNow: () => number, active: boolean, seekOver?: number) {
   const startTimer = useRef<number | null>(null);
   useEffect(() => {
     if (!engine || !timeline || !active) return;
@@ -56,7 +56,7 @@ export function useFollow(engine: Engine | null, timeline: Timeline | null, serv
         return;
       }
       if (!engine.playing()) return engine.play(target);
-      const c = correction(engine.position() - target);
+      const c = correction(engine.position() - target, seekOver);
       if (c.seek) engine.play(target);
       else engine.setRate(c.rate);
     };
@@ -67,7 +67,7 @@ export function useFollow(engine: Engine | null, timeline: Timeline | null, serv
       if (startTimer.current !== null) clearTimeout(startTimer.current);
       startTimer.current = null;
     };
-  }, [engine, timeline, serverNow, active]);
+  }, [engine, timeline, serverNow, active, seekOver]);
 }
 
 /** Lock-screen and headset controls through the Media Session API. */

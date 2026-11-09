@@ -32,11 +32,12 @@ export function clockOffset(samples: ClockSample[]): { offset: number; rtt: numb
 
 /**
  * How a player that owns the speakers should correct toward the timeline. Small drift is absorbed
- * by nudging playback rate (inaudible), large drift by a hard seek.
+ * by nudging playback rate (inaudible), large drift by a hard seek. Phones playing along with the
+ * stage seek sooner (`seekOver` 0.15): two speakers 150 ms apart already sound like an echo.
  */
-export function correction(drift: number): { seek: boolean; rate: number } {
+export function correction(drift: number, seekOver = 0.35): { seek: boolean; rate: number } {
   const a = Math.abs(drift);
-  if (a > 0.35) return { seek: true, rate: 1 };
+  if (a > seekOver) return { seek: true, rate: 1 };
   if (a < 0.04) return { seek: false, rate: 1 };
   return { seek: false, rate: 1 - Math.max(-0.05, Math.min(0.05, drift * 0.5)) };
 }

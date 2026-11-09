@@ -34,6 +34,8 @@ export type SongMeta = {
   /** What kind of lyrics exist: word-timed, line-timed, none, or not looked up yet. */
   lyrics: 'word' | 'line' | 'none' | 'unknown';
   scoring: 'full' | 'lite' | 'none';
+  /** The video that plays shows its own lyrics (karaoke or lyric video), so the stage draws none over it. */
+  hasBurnedLyrics?: boolean;
   plays?: number;
   addedAt?: string;
 };
@@ -48,7 +50,10 @@ export type Participant = {
   connected: boolean;
   team: 'A' | 'B' | null;
   username?: string | null;
+  /** This phone's microphone setup for scoring; a song starts only once its singers are ready. */
+  mic: MicStatus;
 };
+export type MicStatus = 'pending' | 'calibrating' | 'ready';
 
 export type QueueView = {
   id: string;
@@ -90,6 +95,8 @@ export type RoomView = {
   queue: QueueView[];
   phase: Phase;
   current: Performance | null;
+  /** Who sings the next song in the queue, and which of them still has to set up a mic (only when it is scored). */
+  next: { singers: string[]; needsMic: boolean; waiting: string[] } | null;
   /** Room leaderboard: best and summed scores per participant tonight. */
   board: { pid: string; name: string; avatar: Avatar; best: number; total: number; count: number }[];
   teams: { A: number; B: number };
@@ -112,7 +119,7 @@ export const C2S = {
   lyricAnchors: z.object({ anchors: z.array(z.tuple([z.number().min(-60).max(36_000), z.number().min(-60).max(36_000)])).max(60) }),
   skipVote: z.object({}),
   cheer: z.object({}),
-  settings: z.object({ scoring: z.boolean(), maxPerPerson: z.number().int().min(1).max(10), guestsCanQueue: z.boolean(), skipRatio: z.number().min(0.3).max(1), autoAdvance: z.boolean(), stageLyricsWithVideo: z.boolean() }).partial(),
+  settings: z.object({ scoring: z.boolean(), maxPerPerson: z.number().int().min(1).max(10), guestsCanQueue: z.boolean(), skipRatio: z.number().min(0.3).max(1), autoAdvance: z.boolean(), stageLyricsWithVideo: z.boolean(), audioOut: z.enum(['stage', 'all']), hostRole: z.enum(['singer', 'screen']) }).partial(),
   participant: z.object({ pid: id, action: z.enum(['kick', 'promote', 'team']), team: z.enum(['A', 'B']).nullable().optional() }),
   /** Live pitch for the stage's lane: song time and MIDI (or null), at most ~12 a second. */
   live: z.object({ t: z.number().min(0).max(36_000), m: z.number().min(0).max(127).nullable() }),
@@ -121,6 +128,7 @@ export const C2S = {
   stageReady: z.object({ entryId: id, duration: z.number().min(5).max(7200).optional() }),
   stageEnded: z.object({ entryId: id }),
   roulette: z.object({}),
+  micStatus: z.object({ status: z.enum(['pending', 'calibrating', 'ready']) }),
   profile: z.object({ name, avatar }),
 };
 

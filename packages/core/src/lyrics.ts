@@ -1,5 +1,6 @@
 // Timed lyrics: one model for LRC (line level), enhanced LRC (word level), UltraStar (word level
 // plus pitch) and the house band's own songs. Times are seconds on the song's own clock.
+import type { SongMeta, Source } from './protocol.ts';
 
 export type Word = {
   /** Start, seconds. */
@@ -148,6 +149,8 @@ export function parseUltrastar(text: string): { meta: UltrastarMeta; lyrics: Lyr
     cur.push({ t, d, text: txt.replace(/^~$/, '~'), ...(free ? {} : { note: 60 + Number(pitch) }) });
   }
   close();
+  // Duet files list all of P1, then all of P2: put them back in singing order.
+  lines.sort((a, b) => a.t - b.t);
   return { meta, lyrics: { lines, wordTimed: true, pitched: lines.some((l) => l.words.some((w) => w.note !== undefined)) } };
 }
 
@@ -283,6 +286,18 @@ export function vocalRange(l: Lyrics): [number, number] | null {
   if (!ts.length) return null;
   return [Math.min(...ts.map((x) => x.note)), Math.max(...ts.map((x) => x.note))];
 }
+
+/**
+ * Karaoke and lyric videos draw their own words on screen. Read from the catalogue's label and the
+ * video's title and channel ("Karaoke Version", "Lyric Video", "with Lyrics"), unless it says it has none.
+ */
+// shortcut: guessed from text, so an audio-only "karaoke version" counts as burned in; add a per-video flag if that shows up.
+export const burnedLyrics = (s: Source | undefined): boolean =>
+  s?.kind === 'youtube' && (s.label === 'karaoke' || /karaoke|\blyrics?\b/i.test(`${s.videoTitle} ${s.channel}`)) && !/\b(no|without)\s+lyrics\b/i.test(s.videoTitle);
+
+/** Whether the stage draws Croon's lyrics: always for audio, beside a video only when it has no words of its own. */
+export const stageShowsLyrics = (song: Pick<SongMeta, 'sources' | 'hasBurnedLyrics'>, besideVideo: boolean) =>
+  song.sources[0]?.kind !== 'youtube' || (besideVideo && !song.hasBurnedLyrics);
 
 const NAMES = ['C', 'C♯', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
 export const noteName = (midi: number) => `${NAMES[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`;

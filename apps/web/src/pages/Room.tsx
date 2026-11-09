@@ -3,7 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Play, Pause, SkipForward, Square, Rewind, FastForward, ThumbsUp, Trash2, ChevronUp, ChevronDown, Heart, Mic, MicOff, Tv, Share2, Shuffle, Dices, Upload, Crown, UserX, Search, QrCode, Type } from 'lucide-react';
+import { Play, Pause, SkipForward, Square, Rewind, FastForward, ThumbsUp, Trash2, ChevronUp, ChevronDown, Heart, Mic, MicOff, Tv, Share2, Shuffle, Dices, Upload, Crown, UserX, Search, QrCode, Type, Volume2, VolumeX } from 'lucide-react';
+import { audioContext } from '../audio/engines.ts';
 import { AVATAR_COLORS, AVATAR_GLYPHS } from '../../../../packages/core/src/labels.ts';
 import type { Avatar as AvatarT, Participant, RoomView, SongMeta } from '../../../../packages/core/src/protocol.ts';
 import { MODES, withParts, type ModeId } from '../../../../packages/core/src/modes.ts';
@@ -26,6 +27,7 @@ import { Avatar, AVATAR_ICONS, Key, Loading, Toast, Field, genreInk, SourceTag }
 import { TapeScrub } from '../components/TapeScrub.tsx';
 import { roundOf } from '../../../../packages/core/src/queue.ts';
 import { rememberRoom } from './Rooms.tsx';
+import { FindAnySong } from '../components/FindAnySong.tsx';
 
 const ME_KEY = 'croon:me';
 const pickRandom = <T,>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)];
@@ -124,6 +126,60 @@ function useSingerMic(view: RoomView | null, pid: string | null, serverNow: () =
   return { mic, on, setOn, level, singing };
 }
 
+/** How the room plays tonight. The host picks; everyone sees it. */
+function RoomSetup({ view, host, emit }: { view: RoomView; host: boolean; emit: (e: string, d?: unknown) => Promise<Reply> }) {
+  const s = view.settings;
+  if (!host) return <p className="field-hint">{s.audioOut === 'all' ? 'The track plays on every phone, in step with the stage.' : 'The track plays on the stage screen.'}{s.hostRole === 'screen' ? ' The host is running the screen, not singing.' : ''}</p>;
+  const seg = <K extends 'audioOut' | 'hostRole'>(k: K, label: string, opts: [RoomView['settings'][K], string][]) => (
+    <div className="seg" role="group" aria-label={label}>
+      {opts.map(([v, t]) => <button key={v} aria-pressed={s[k] === v} onClick={() => void emit('settings', { [k]: v })}>{t}</button>)}
+    </div>
+  );
+  return (
+    <div style={{ width: '100%', textAlign: 'left', display: 'grid', gap: 8 }}>
+      <p className="field-label">Audio</p>
+      {seg('audioOut', 'Audio output', [['stage', 'Stage only'], ['all', 'Every phone, synced']])}
+      <p className="field-label">This device</p>
+      {seg('hostRole', 'Host role', [['singer', 'I sing too'], ['screen', 'Screen and controls only']])}
+    </div>
+  );
+}
+
+const MIC_LABEL = { pending: 'Mic not set up', calibrating: 'Calibrating…', ready: 'Ready' } as const;
+
+/** The next song's singers, each one's part and mic setup; the host starts once nobody is waiting. */
+function NextUp({ view, pid, calibrate }: { view: RoomView; pid: string; calibrate(): void }) {
+  const n = view.next, q = view.queue[0];
+  if (!n || !q) return null;
+  const host = view.hostPid === pid;
+  const who = (p: string) => view.participants.find((x) => x.pid === p);
+  const waiting = n.waiting.map((p) => who(p)?.name ?? 'a singer').join(', ');
+  return (
+    <div style={{ width: '100%', textAlign: 'left' }}>
+      <p className="field-label">Next: {q.song.title}{q.mode !== 'solo' ? ` · ${MODES[q.mode].name}` : ''}</p>
+      <ul className="people">
+        {n.singers.map((s, i) => {
+          const p = who(s);
+          if (!p) return null;
+          const part = MODES[q.mode].parts ? ` · Singer ${i + 1}, ${i ? 'red' : 'teal'} lines` : q.mode === 'group' ? ' · Chorus, every line' : '';
+          return (
+            <li key={s} className={p.connected ? '' : 'off'}>
+              <Avatar a={p.avatar} size={30} />
+              <div className="who">
+                {p.name}{s === pid ? ' (you)' : ''}{part}
+                <small>{!n.needsMic ? 'Scoring is off, no mic needed' : p.connected ? MIC_LABEL[p.mic] : 'Away'}</small>
+              </div>
+              {n.needsMic && <span className={`status-dot${p.connected && p.mic === 'ready' ? '' : ' off'}`} aria-hidden />}
+              {s === pid && n.needsMic && p.mic === 'pending' && <Key size="sm" tone="hot" onClick={calibrate} icon={<Mic size={14} />}>Set up my mic</Key>}
+            </li>
+          );
+        })}
+      </ul>
+      {n.waiting.length > 0 && <p className="field-hint">Waiting for {waiting} to set up their mic.{host ? ' Or turn scoring off in Settings to start without mics.' : ''}</p>}
+    </div>
+  );
+}
+
 function QueueTab({ view, pid, emit }: { view: RoomView; pid: string; emit: (e: string, d?: unknown) => Promise<Reply> }) {
   const host = view.hostPid === pid;
   const name = (p: string) => view.participants.find((x) => x.pid === p)?.name ?? 'Someone';
@@ -174,14 +230,16 @@ function AddTab({ view, pid, emit, preset }: { view: RoomView; pid: string; emit
   const [file, setFile] = useState<File | null>(null);
   const [lyricsText, setLyricsText] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const others = view.participants.filter((p) => p.pid !== pid && p.role !== 'stage');
+  const [searched, setSearched] = useState('');
+  const { user } = useSession();
+  const others = view.participants.filter((p) => p.pid !== pid && p.role !== 'stage' && !(p.role === 'host' && view.settings.hostRole === 'screen'));
 
   useEffect(() => {
     if (preset) api<{ song: SongMeta }>(`/songs/${encodeURIComponent(preset)}`).then((r) => setSong(r.song)).catch(() => {});
   }, [preset]);
   useEffect(() => {
     const t = setTimeout(() => {
-      api<{ songs: SongMeta[] }>(`/songs/search?${new URLSearchParams({ q, playable: '1', limit: '20' })}`).then((r) => setResults(r.songs)).catch(() => {});
+      api<{ songs: SongMeta[] }>(`/songs/search?${new URLSearchParams({ q, playable: '1', limit: '20' })}`).then((r) => { setResults(r.songs); setSearched(q.trim()); }).catch(() => {});
     }, 200);
     return () => clearTimeout(t);
   }, [q]);
@@ -195,6 +253,14 @@ function AddTab({ view, pid, emit, preset }: { view: RoomView; pid: string; emit
     if (r.error) return setMsg({ t: r.error, tone: 'error' });
     setMsg({ t: mode === 'challenge' ? 'The dice picked your song. Check the queue.' : 'Queued.', tone: 'info' });
     setSong(null);
+  };
+  // A song brought into Croon from here goes straight into the queue, unless a partner still has to be picked.
+  const seeded = (s: SongMeta) => {
+    if (needsPartner && !partner) {
+      setSong(s);
+      return setMsg({ t: 'Added to Croon. Pick who sings with you, then add it to the queue.', tone: 'info' });
+    }
+    void add(s.key);
   };
   const upload = async () => {
     if (!file) return;
@@ -257,6 +323,16 @@ function AddTab({ view, pid, emit, preset }: { view: RoomView; pid: string; emit
               </li>
             ))}
           </ul>
+          {!user ? (
+            searched.length >= 2 && !results.length && <p className="field-hint">Not in Croon yet. <Link to="/signin" state={{ from: `/r/${view.code}` }}>Sign in</Link> to add new songs from here.</p>
+          ) : searched.length >= 2 && !results.length ? (
+            <FindAnySong key={searched} initial={searched} auto onPick={seeded} />
+          ) : (
+            <details>
+              <summary className="field-label" style={{ cursor: 'pointer' }}>Not here? Find any song</summary>
+              <FindAnySong initial={searched} onPick={seeded} />
+            </details>
+          )}
         </>
       )}
       <details>
@@ -323,7 +399,7 @@ function SettingsTab({ view, emit }: { view: RoomView; emit: (e: string, d?: unk
       <label className="check"><input type="checkbox" checked={s.scoring} onChange={(e) => set({ scoring: e.target.checked })} /> Scoring on</label>
       <label className="check"><input type="checkbox" checked={s.guestsCanQueue} onChange={(e) => set({ guestsCanQueue: e.target.checked })} /> Guests can add songs</label>
       <label className="check"><input type="checkbox" checked={s.autoAdvance} onChange={(e) => set({ autoAdvance: e.target.checked })} /> Start the next song automatically after results</label>
-      <label className="check"><input type="checkbox" checked={s.stageLyricsWithVideo} onChange={(e) => set({ stageLyricsWithVideo: e.target.checked })} /> Show Croon's lyrics beside karaoke videos on the stage</label>
+      <label className="check"><input type="checkbox" checked={s.stageLyricsWithVideo} onChange={(e) => set({ stageLyricsWithVideo: e.target.checked })} /> Show Croon's lyrics beside videos on the stage (never over karaoke or lyric videos, which have their own)</label>
       <label className="range-row"><span>Songs each</span><input type="range" min={1} max={10} value={s.maxPerPerson} onChange={(e) => set({ maxPerPerson: Number(e.target.value) })} /><b className="num">{s.maxPerPerson}</b></label>
       <label className="range-row"><span>Skip needs</span><input type="range" min={0.3} max={1} step={0.05} value={s.skipRatio} onChange={(e) => set({ skipRatio: Number(e.target.value) })} /><b className="num">{Math.round(s.skipRatio * 100)}%</b></label>
     </div>
@@ -342,7 +418,15 @@ export default function Room() {
   const [showQr, setShowQr] = useState(false);
   const [toast, setToast] = useState<{ t: string; tone: 'info' | 'error' } | null>(null);
   const [showLyricOpts, setShowLyricOpts] = useState(false);
+  const [audioJoined, setAudioJoined] = useState(false);
+  const [phoneMute, setPhoneMute] = useState<boolean | null>(null);
   const singer = useSingerMic(view, pid, serverNow, live, emit);
+  // The room shows what this phone's mic really is: reloads, closed setups and reconnects all resync here.
+  const myMic = view?.participants.find((p) => p.pid === pid)?.mic;
+  const wantMic = calib ? 'calibrating' : singer.on ? 'ready' : 'pending';
+  useEffect(() => {
+    if (myMic && myMic !== wantMic && status === 'live') void emit('micStatus', { status: wantMic });
+  }, [myMic, wantMic, status, emit]);
 
   useEffect(() => void rememberRoom(code), [code]);
   const c = view?.current ?? null;
@@ -374,6 +458,11 @@ export default function Room() {
   const host = view.hostPid === pid;
   const stageOn = view.participants.some((p) => p.role === 'stage' && p.connected);
   const iPlayAudio = host && !stageOn;
+  const playAlong = view.settings.audioOut === 'all' && !iPlayAudio && !!c && (view.phase === 'announce' || view.phase === 'playing');
+  // shortcut: YouTube stays stage-only: the embed cannot nudge its speed, and phones block its sound without a tap inside the video; revisit with an audio-only source.
+  const phoneCanPlay = c?.song.sources[0]?.kind !== 'youtube';
+  // A singer's own phone starts muted so the track does not leak into their mic.
+  const muted = phoneMute ?? singer.singing;
   const singers = c ? (c.singers.map((s) => view.participants.find((p) => p.pid === s)).filter(Boolean) as Participant[]) : [];
   const myPart = c && MODES[c.mode].parts ? c.singers.indexOf(pid) + 1 || undefined : undefined;
   const joinUrl = `${location.origin}/r/${code}`;
@@ -402,10 +491,13 @@ export default function Room() {
       {host && !stageOn && view.phase === 'lobby' && <p className="notice"><b>No stage screen yet.</b> Open <Link to={`/stage/${code}`}>/stage/{code}</Link> on the TV or a laptop. Until then this device plays the music.</p>}
 
       <section className="now-card" aria-label="Now playing">
+        {calib && <div style={{ padding: 12 }}><Calibrate onClose={() => setCalib(false)} onReady={(m) => { singer.mic.current = m; singer.setOn(true); setCalib(false); }} /></div>}
         {!c && (
           <div className="results-card">
-            <p className="headline">{view.queue.length ? 'Ready when the host is' : 'Queue a song to get going'}</p>
-            {host && <Key tone="hot" size="lg" onClick={() => doEmit('control', { action: 'start' })} disabled={!view.queue.length} icon={<Play size={18} />}>Start the first song</Key>}
+            <p className="headline">{!view.queue.length ? 'Queue a song to get going' : host ? (view.next?.waiting.length ? 'Waiting for the singers' : 'Everyone is ready') : 'Waiting for host'}</p>
+            <NextUp view={view} pid={pid} calibrate={() => setCalib(true)} />
+            <RoomSetup view={view} host={host} emit={doEmit} />
+            {host && <Key tone="hot" size="lg" onClick={() => doEmit('control', { action: 'start' })} disabled={!view.queue.length || !!view.next?.waiting.length} icon={<Play size={18} />}>Start the first song</Key>}
             {host && <Key onClick={() => doEmit('roulette')} icon={<Dices size={16} />}>Party roulette</Key>}
           </div>
         )}
@@ -417,7 +509,7 @@ export default function Room() {
             </div>
             {singer.singing && view.phase !== 'results' && (
               <div className="you-sing">
-                <Mic size={16} aria-hidden /> You're on{myPart ? `: your lines are ${myPart === 1 ? 'teal' : 'red'}` : ''}
+                <Mic size={16} aria-hidden /> {myPart ? `Singer ${myPart}: sing the ${myPart === 1 ? 'teal' : 'red'} lines, gold ones together` : c.mode === 'group' ? 'Chorus: every line is yours' : "You're on"}
                 <span style={{ flex: 1 }} />
                 {view.settings.scoring && c.song.scoring !== 'none' && (
                   <Key size="sm" tone="card" onClick={() => (singer.on ? (singer.setOn(false), singer.mic.current?.close()) : setCalib(true))} icon={singer.on ? <Mic size={14} /> : <MicOff size={14} />}>{singer.on ? 'Scoring' : 'Score me'}</Key>
@@ -427,9 +519,21 @@ export default function Room() {
             {!singer.singing && singers.length > 0 && view.phase !== 'announce' && (
               <div className="singing-now">{singers.map((p) => <Avatar key={p.pid} a={p.avatar} size={24} />)} <b>{singers.map((p) => p.name).join(' & ')}</b> {view.phase === 'results' ? 'just sang' : 'on the mic'}</div>
             )}
-            {calib && <div style={{ padding: 12 }}><Calibrate onClose={() => setCalib(false)} onReady={(m) => { singer.mic.current = m; singer.setOn(true); setCalib(false); }} /></div>}
             {singer.on && singer.singing && view.phase === 'playing' && <div className="mic-meter"><Mic size={14} aria-hidden /><div className="meter"><i style={{ width: `${Math.min(100, singer.level * 600)}%` }} /></div></div>}
             {iPlayAudio && <RoomAudio view={view} serverNow={serverNow} emit={emit} stage={false} />}
+            {playAlong && !phoneCanPlay && <p className="field-hint" style={{ padding: '0 16px' }}>This video plays on the stage only: phones cannot keep a YouTube video in step.</p>}
+            {playAlong && phoneCanPlay && (audioJoined ? (
+              <div className="host-deck">
+                <RoomAudio view={view} serverNow={serverNow} emit={emit} stage={false} follower volume={muted ? 0 : 1} />
+                <Key size="sm" tone="ghost" onClick={() => setPhoneMute(!muted)} down={muted} aria-pressed={muted} icon={muted ? <VolumeX size={14} /> : <Volume2 size={14} />}>{muted ? 'Muted on my phone' : 'Mute on my phone'}</Key>
+              </div>
+            ) : (
+              <div className="host-deck">
+                {/* Phones only let a page make sound after a tap, so the tap starts the audio. */}
+                <Key size="sm" tone="hot" onClick={() => { audioContext(); setAudioJoined(true); }} icon={<Volume2 size={14} />}>Join audio</Key>
+                <span className="field-hint">The track plays on every phone tonight.</span>
+              </div>
+            ))}
             {view.phase === 'announce' && <Spotlight singers={singers} song={c.song} mode={c.mode} />}
             {view.phase === 'playing' && (lyrics ? (
               <Lyrics lyrics={lyrics} pos={getPos} prefs={prefs} variant="phone" parts={!!MODES[c.mode].parts} myPart={myPart} onPickLine={host && c.song.sources[0]?.kind !== 'house' && lyr.lyrics ? (i) => void doEmit('lyricAnchors', { anchors: addAnchor(c.lyricAnchors, lyr.lyrics!.lines[i].t, getPos()) }) : undefined} />
@@ -439,7 +543,8 @@ export default function Room() {
               <div className="results-card">
                 {c.result ? <p className="headline">{c.result.headline}</p> : <Loading label="Counting the score" />}
                 {c.scores[pid] && <ScoreReveal score={c.scores[pid]} compact />}
-                {!c.scores[pid] && Object.entries(c.scores).map(([p, s]) => <p key={p} className="empty">{view.participants.find((x) => x.pid === p)?.name}: <b className="num">{s.total}</b></p>)}
+                {Object.entries(c.scores).filter(([p]) => p !== pid).map(([p, s]) => <p key={p} className="empty">{view.participants.find((x) => x.pid === p)?.name}: <b className="num">{s.total}</b></p>)}
+                <NextUp view={view} pid={pid} calibrate={() => setCalib(true)} />
               </div>
             )}
             {view.phase === 'playing' && !singer.singing && (
@@ -462,7 +567,7 @@ export default function Room() {
                 <Key size="sm" onClick={() => doEmit('control', { action: 'skip' })} icon={<SkipForward size={14} />}>Skip</Key>
               </>
             )}
-            {view.phase === 'results' && <Key size="sm" tone="hot" onClick={() => doEmit('control', { action: 'next' })} disabled={!view.queue.length} icon={<SkipForward size={14} />}>Next song</Key>}
+            {view.phase === 'results' && <Key size="sm" tone="hot" onClick={() => doEmit('control', { action: 'next' })} disabled={!view.queue.length || !!view.next?.waiting.length} icon={<SkipForward size={14} />}>Next song</Key>}
             <Key size="sm" tone="ghost" onClick={() => doEmit('control', { action: 'end' })} icon={<Square size={14} />}>End song</Key>
             {view.phase === 'playing' && lyrics && !c.song.key.startsWith('hb:') && (
               <span className="offset">

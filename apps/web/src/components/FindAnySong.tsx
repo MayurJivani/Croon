@@ -1,7 +1,7 @@
 // Growing the library from the library itself: look a song or artist up on Deezer, bring it in,
 // and let Croon auto-find synced lyrics and a karaoke video for it.
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Download, Disc3, Check } from 'lucide-react';
 import type { SongMeta } from '../../../../packages/core/src/protocol.ts';
 import { api } from '../lib/api.ts';
@@ -53,8 +53,14 @@ export function ImportProgress({ jobId }: { jobId: string }) {
   );
 }
 
-export function FindAnySong({ initial }: { initial: string }) {
+/** `onPick` (in a room): a song once it is in Croon goes to the caller instead of its song page, and whole discographies are left to the library. */
+export function FindAnySong({ initial, auto = false, onPick }: { initial: string; auto?: boolean; onPick?: (s: SongMeta) => void }) {
   const { user } = useSession();
+  const nav = useNavigate();
+  const loc = useLocation();
+  // Signed-out visitors get a working button that signs them in and brings them back to this search.
+  const here = loc.pathname + loc.search;
+  const signIn = () => nav('/signin', { state: { from: here } });
   const [q, setQ] = useState(initial);
   const [found, setFound] = useState<Found | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -73,18 +79,25 @@ export function FindAnySong({ initial }: { initial: string }) {
       setBusy(null);
     }
   };
+  // A library search that comes up short looks on Deezer by itself; adding stays a click.
+  useEffect(() => {
+    if (auto && !found && initial.trim().length >= 2) void look();
+  }, [auto]); // eslint-disable-line react-hooks/exhaustive-deps
   const importSong = async (id: string) => {
     setBusy(id);
     try {
       const r = await api<{ song: SongMeta; found: AutoFind }>('/songs/import', { method: 'POST', body: { deezerId: id } });
       setDone((d) => ({ ...d, [id]: r.song.key }));
-      setMsg({ t: `Added ${r.song.title}. ${describeFind(r.found)}`, tone: 'info' });
+      if (onPick && r.song.sources.length) onPick(r.song);
+      else if (onPick) setMsg({ t: `Added ${r.song.title} to Croon, but no karaoke track was found for it, so it cannot be queued yet. Attach one from its song page.`, tone: 'error' });
+      else setMsg({ t: `Added ${r.song.title}. ${describeFind(r.found)}`, tone: 'info' });
     } catch (e) {
       setMsg({ t: (e as Error).message, tone: 'error' });
     } finally {
       setBusy(null);
     }
   };
+  const pickKnown = (key: string) => void api<{ song: SongMeta }>(`/songs/${encodeURIComponent(key)}`).then((r) => onPick!(r.song)).catch((e: Error) => setMsg({ t: e.message, tone: 'error' }));
   const importArtist = async (id: string, name: string) => {
     setBusy(id);
     try {
@@ -100,7 +113,7 @@ export function FindAnySong({ initial }: { initial: string }) {
   return (
     <section className="find-any">
       <h2>Find any song</h2>
-      <p className="field-hint">Not in Croon yet? Look it up, bring it in, and Croon finds synced lyrics and a karaoke video for it.{!user && <> <Link to="/signin" state={{ from: '/library' }}>Sign in</Link> to add songs.</>}</p>
+      <p className="field-hint">Not in Croon yet? Look it up, bring it in, and Croon finds synced lyrics and a karaoke video for it.{!user && <> <Link to="/signin" state={{ from: here }}>Sign in</Link> to add songs.</>}</p>
       <form className="row" onSubmit={(e) => { e.preventDefault(); void look(); }}>
         <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Song or artist" aria-label="Song or artist to find" style={{ flex: 1 }} minLength={2} required />
         <Key type="submit" disabled={busy === 'search'}>{busy === 'search' ? 'Looking…' : 'Look it up'}</Key>
@@ -109,13 +122,13 @@ export function FindAnySong({ initial }: { initial: string }) {
       {jobId && <ImportProgress jobId={jobId} />}
       {found && !jobId && (
         <>
-          {found.artists.length > 0 && (
+          {!onPick && found.artists.length > 0 && (
             <div className="find-artists">
               {found.artists.map((a) => (
                 <div key={a.id} className="find-artist">
                   <img src={a.picture} alt="" width={56} height={56} loading="lazy" />
                   <div><b>{a.name}</b><span>{a.albums} releases · {a.fans.toLocaleString()} fans</span></div>
-                  <Key size="sm" onClick={() => importArtist(a.id, a.name)} disabled={!user || !!busy} icon={<Disc3 size={14} />}>Import discography</Key>
+                  <Key size="sm" onClick={() => (user ? importArtist(a.id, a.name) : signIn())} disabled={!!busy} icon={<Disc3 size={14} />}>Import discography</Key>
                 </div>
               ))}
             </div>
@@ -128,10 +141,12 @@ export function FindAnySong({ initial }: { initial: string }) {
                 <span className="spine-artist">{s.artist}</span>
                 <span className="spine-meta">
                   <span className="spine-facts num">{fmtTime(s.duration)}</span>
-                  {s.inCatalog || done[s.deezerId] ? (
+                  {onPick && (s.inCatalog || done[s.deezerId]) ? (
+                    <Key size="sm" tone="card" onClick={() => pickKnown(done[s.deezerId] ?? s.key)} disabled={!!busy} icon={<Check size={14} />}>Queue it</Key>
+                  ) : s.inCatalog || done[s.deezerId] ? (
                     <Link to={`/song/${encodeURIComponent(done[s.deezerId] ?? s.key)}`} className="key key-sm key-card"><Check size={14} aria-hidden /><span>In Croon</span></Link>
                   ) : (
-                    <Key size="sm" tone="card" onClick={() => importSong(s.deezerId)} disabled={!user || !!busy} icon={<Download size={14} />}>{busy === s.deezerId ? 'Adding…' : 'Add'}</Key>
+                    <Key size="sm" tone="card" onClick={() => (user ? importSong(s.deezerId) : signIn())} disabled={!!busy} icon={<Download size={14} />}>{busy === s.deezerId ? 'Adding…' : 'Add'}</Key>
                   )}
                 </span>
               </li>

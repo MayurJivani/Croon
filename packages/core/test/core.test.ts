@@ -1,13 +1,26 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLrc, parseUltrastar, lineAt, lineText, targets, shiftLyrics, timeMap, mapLyrics, addAnchor, nudgeAnchors } from '../src/lyrics.ts';
+import { parseLrc, parseUltrastar, lineAt, lineText, targets, shiftLyrics, timeMap, mapLyrics, addAnchor, nudgeAnchors, nudgeAt, sungEnd, wordFills, burnedLyrics, stageShowsLyrics } from '../src/lyrics.ts';
 import { HOUSE_BAND, compile } from '../src/houseband.ts';
 import { positionAt, play, pause, seek, clockOffset, correction, stopped } from '../src/timeline.ts';
 import { addEntry, toggleVote, roundOf, moveEntry, skipThreshold, type QueueEntry } from '../src/queue.ts';
-import { yin, freqToMidi } from '../src/pitch.ts';
+import { yin, freqToMidi, rms, PITCH_LAG } from '../src/pitch.ts';
 import { scoreFull, scoreLite, pcDistance, type Frame } from '../src/scoring.ts';
 import { MODES, withParts } from '../src/modes.ts';
 import { romanize, needsRoman } from '../src/romanize.ts';
+
+test('line-timed lyrics fill left to right at an estimated pace and end before a long gap', () => {
+  const l = parseLrc('[00:10.00]aaaa bbbb\n[00:40.00]next', 50);
+  const line = l.lines[0];
+  const end = sungEnd(line, false);
+  assert.ok(end > 10.5 && end < 12, `estimated ${end}`);
+  assert.deepEqual(wordFills(line, 9, false), [0, 0]);
+  const mid = wordFills(line, 10 + (end - 10) * 0.75, false);
+  assert.ok(mid[0] === 1 && mid[1] > 0.4 && mid[1] < 0.6, `three quarters ${mid}`);
+  assert.deepEqual(wordFills(line, end, false), [1, 1]);
+  const short = parseLrc('[00:10.00]a very long line of lyrics here\n[00:11.00]next', 20).lines[0];
+  assert.equal(sungEnd(short, false), 11, 'never past the next line');
+});
 
 test('LRC: line timing, multi-tags, offset, and no fake word timing', () => {
   const l = parseLrc('[ti:x]\n[offset:+500]\n[00:10.50][01:00.00]Hello world\n[00:12.00]Second line\n[00:14.00]', 70);
@@ -66,6 +79,12 @@ test('timeline: play, pause, seek and clock offset', () => {
   assert.equal(correction(1).seek, true);
   assert.equal(correction(0.01).rate, 1);
   assert.ok(correction(0.1).rate < 1, 'ahead of the timeline slows down');
+  // A phone playing along with the stage: seek past 150 ms, nudge the speed below it, leave tiny drift alone.
+  assert.deepEqual(correction(0.2, 0.15), { seek: true, rate: 1 });
+  assert.deepEqual(correction(-0.2, 0.15), { seek: true, rate: 1 });
+  assert.ok(correction(-0.1, 0.15).rate > 1 && !correction(-0.1, 0.15).seek, 'behind speeds up');
+  assert.deepEqual(correction(0.02, 0.15), { seek: false, rate: 1 });
+  assert.equal(correction(0.2).seek, false, 'the stage keeps its looser default');
 });
 
 test('queue: one per person per round, votes stay within a round, caps hold', () => {
@@ -86,6 +105,8 @@ test('queue: one per person per round, votes stay within a round, caps hold', ()
   assert.equal(q[0].id, 'a3');
   assert.equal(skipThreshold(3, 0.6), 2);
   assert.equal(skipThreshold(10, 0.6), 6);
+  assert.equal(skipThreshold(1, 0.6), 1, 'a lone listener can still skip');
+  assert.equal(skipThreshold(2, 0.3), 2);
 });
 
 test('YIN finds a sung A4', () => {
@@ -119,14 +140,63 @@ test('scoring is fair: octave and latency do not cost points, silence does', () 
   assert.ok(lite.total > 80, `lite ${lite.total}`);
 });
 
-test('modes: duets split lines, battles pick the higher score', () => {
+test('calibration: a fake mic that answers N ms late is measured within 20 ms', () => {
+  // A fake microphone: the song's melody as a sine wave, sung N ms behind the targets. It goes through
+  // what a phone's Mic does: a 2048-sample window read 25 times a second, YIN, frames stamped PITCH_LAG of a window back.
+  const sr = 48000, win = 2048;
+  const ts = targets(compile(HOUSE_BAND.find((s) => s.slug === 'twinkle-twinkle')!).lyrics).filter((n) => n.t < 24);
+  const end = ts.at(-1)!.t + ts.at(-1)!.d + 1;
+  const measure = (lateMs: number) => {
+    const pcm = new Float32Array(Math.ceil((end + 0.5) * sr));
+    for (const n of ts) {
+      const hz = 440 * 2 ** ((n.note - 69) / 12), a = Math.round((n.t + lateMs / 1000) * sr), b = Math.round((n.t + n.d + lateMs / 1000) * sr);
+      for (let i = Math.max(0, a); i < b; i++) pcm[i] = 0.3 * Math.sin((2 * Math.PI * hz * (i - a)) / sr) * Math.min(1, (i - a) / 480, (b - i) / 480);
+    }
+    const frames: Frame[] = [];
+    for (let at = win / sr + 0.013; at < end; at += 0.04) {
+      const buf = pcm.subarray(Math.round(at * sr) - win, Math.round(at * sr));
+      const p = rms(buf) < 0.006 ? null : yin(buf, sr);
+      frames.push([at - (win * PITCH_LAG) / sr, p && p.clarity > 0.82 ? freqToMidi(p.freq) : null]);
+    }
+    return scoreFull(frames, ts).offsetMs;
+  };
+  const got = [-125, -60, 0, 25, 75, 120, 175, 260, 330].map((n) => [n, measure(n)]);
+  for (const [n, m] of got) assert.ok(Math.abs(m - n) <= 20, `late ${n} ms measured as ${m} ms: ${JSON.stringify(got)}`);
+});
+
+test('modes: duets split by verse, keep marked parts, battles pick the higher score', () => {
   const song = compile(HOUSE_BAND[1]);
   const d = withParts(song.lyrics);
-  assert.deepEqual(d.lines.slice(0, 3).map((l) => l.part), [1, 2, 1]);
+  assert.ok(d.lines.some((l) => l.part === 1) && d.lines.some((l) => l.part === 2), 'both singers get lines');
   assert.equal(d.lines.at(-1)!.part, 0);
+  // Unmarked: four lines a verse, a long pause hands over early, the last line is together.
+  const lrc = parseLrc('[00:00]a\n[00:02]b\n[00:04]c\n[00:06]d\n[00:08]e\n[00:10]f\n[00:20]g\n[00:22]h\n[00:24]end', 30);
+  assert.deepEqual(withParts(lrc).lines.map((l) => l.part), [1, 1, 1, 1, 2, 2, 1, 1, 0]);
+  assert.deepEqual(withParts(parseLrc('[00:00]a\n[00:02]b\n[00:04]c', 6)).lines.map((l) => l.part), [1, 2, 0], 'too short to hand over by verse');
+  // UltraStar duet: P1 listed before P2, P3 and a line under both singers are sung together.
+  const us = parseUltrastar('#BPM:120\nP1\n: 0 4 0 one\n- 8\n: 40 4 0 both\nP2\n: 20 4 2 two\n- 30\n: 40 4 0 both\nP3\n: 60 4 0 all\nE');
+  const dp = withParts(us.lyrics);
+  assert.deepEqual(dp.lines.map((l) => [lineText(l), l.part]), [['one', 1], ['two', 2], ['both', 0], ['all', 0]]);
+  assert.deepEqual(targets(dp, 2).map((t) => t.note), [62, 60, 60], 'singer 2 is scored on their line and the shared ones');
   const r = MODES.battle.resolve([{ pid: 'a', name: 'Ann', total: 71 }, { pid: 'b', name: 'Bob', total: 80 }]);
   assert.deepEqual(r.winners, ['b']);
   assert.equal(shiftLyrics(song.lyrics, 1).lines[0].t, song.lyrics.lines[0].t + 1);
+});
+
+test('videos with their own lyrics get no stage overlay', () => {
+  const yt = (videoTitle: string, label: 'karaoke' | 'instrumental' | 'original', channel = 'Some Channel') => ({ kind: 'youtube' as const, videoId: 'x', videoTitle, channel, label });
+  assert.equal(burnedLyrics(yt('Song (Karaoke Version)', 'karaoke')), true);
+  assert.equal(burnedLyrics(yt('Song - Instrumental with Lyrics', 'instrumental')), true);
+  assert.equal(burnedLyrics(yt('Song (Official Lyric Video)', 'original')), true);
+  assert.equal(burnedLyrics(yt('Song (Instrumental)', 'instrumental', 'Sing King Karaoke')), true, 'a karaoke channel');
+  assert.equal(burnedLyrics(yt('Song (Instrumental)', 'instrumental')), false);
+  assert.equal(burnedLyrics(yt('Song Karaoke (No Lyrics)', 'karaoke')), false, 'says it has none');
+  assert.equal(burnedLyrics({ kind: 'house', slug: 'x' }), false);
+  const song = (src: Parameters<typeof burnedLyrics>[0]) => ({ sources: src ? [src] : [], hasBurnedLyrics: burnedLyrics(src) });
+  assert.equal(stageShowsLyrics(song(yt('Song (Karaoke Version)', 'karaoke')), true), false, 'burned in: no overlay even with the setting on');
+  assert.equal(stageShowsLyrics(song(yt('Song (Instrumental)', 'instrumental')), true), true);
+  assert.equal(stageShowsLyrics(song(yt('Song (Instrumental)', 'instrumental')), false), false, 'the host turned it off');
+  assert.equal(stageShowsLyrics(song({ kind: 'house', slug: 'x' }), false), true, 'audio always shows lyrics');
 });
 
 test('romanisation reads the way lyric sheets are written', () => {
@@ -158,6 +228,10 @@ test('sync points: one is an offset, two stretch, bad taps cannot tangle the map
   assert.deepEqual(a, [[60, 24], [100, 150]], 'a point that would run time backwards drops the conflicting one');
   assert.deepEqual(nudgeAnchors([[60, 24]], -0.25), [[60, 23.75]]);
   assert.deepEqual(nudgeAnchors([], 1), [[0, 1]]);
+  const local = nudgeAt([[60, 24], [160, 134]], 110, 0.5);
+  assert.deepEqual(local, [[60, 24], [110, 79.5], [160, 134]], 'a nudge at one line adds a point there');
+  assert.equal(timeMap(local)(60), 24, 'and leaves the other sections where they were');
+  assert.deepEqual(nudgeAt([], 30, -0.25), [[30, 29.75]]);
   const l = parseLrc('[01:00.00]First\n[02:40.00]Second\n[03:00.00]', 200);
   const m = mapLyrics(l, [[60, 24], [160, 134]]);
   assert.equal(m.lines[0].t, 24);

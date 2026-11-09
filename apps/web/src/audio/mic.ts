@@ -1,6 +1,6 @@
 // The microphone, for scoring only. Audio is analysed here, on this device, into pitch frames
 // (time + note). Nothing is recorded, uploaded or stored.
-import { yin, rms, freqToMidi } from '../../../../packages/core/src/pitch.ts';
+import { yin, rms, freqToMidi, PITCH_LAG } from '../../../../packages/core/src/pitch.ts';
 import { audioContext } from './engines.ts';
 
 export type Calibration = { floor: number; deviceId: string | null; at: number; echo: boolean };
@@ -33,6 +33,8 @@ export class Mic {
   private buf = new Float32Array(2048);
   private timer: number | null = null;
   floor = 0.01;
+  /** Seconds between a sound reaching the mic and this device reading it; frames are stamped that much earlier. */
+  latency = 0;
 
   get active() {
     return !!this.stream;
@@ -53,6 +55,9 @@ export class Mic {
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 2048;
     ctx.createMediaStreamSource(this.stream).connect(this.analyser);
+    // A reading describes sound from the past: the input delay the device reports, plus how far back in the window YIN hears a note.
+    const reported = (this.stream.getAudioTracks()[0]?.getSettings() as { latency?: number } | undefined)?.latency;
+    this.latency = (Number.isFinite(reported) ? reported! : 0) + (this.analyser.fftSize * PITCH_LAG) / ctx.sampleRate;
   }
 
   /** One reading: loudness and, if voiced and clear, the MIDI pitch. */
@@ -103,7 +108,7 @@ export class Mic {
     this.stop();
     this.timer = window.setInterval(() => {
       const r = this.read();
-      onFrame(songTime(), r.midi === null ? null : Math.round(r.midi * 100) / 100, r.level);
+      onFrame(songTime() - this.latency, r.midi === null ? null : Math.round(r.midi * 100) / 100, r.level);
     }, 40);
   }
 
