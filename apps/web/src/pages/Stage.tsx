@@ -157,7 +157,8 @@ export default function Stage() {
             <motion.div key={`r-${c.entryId}`} className="results-card" initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
               <p className="headline" style={{ fontSize: 'clamp(40px, 4vw, 90px)' }}>{c.result?.headline ?? 'Counting the score…'}</p>
               <div className="row" style={{ justifyContent: 'center', alignItems: 'flex-start', gap: '3vw' }}>
-                {Object.entries(c.scores).map(([pid, s]) => <ScoreReveal key={pid} score={s} name={name(pid)} />)}
+                {/* Equal columns: a card sized to its own footnote squeezed the grade over the score. */}
+                {Object.entries(c.scores).map(([pid, s]) => <div key={pid} style={{ flex: '1 1 0', maxWidth: 440 }}><ScoreReveal score={s} name={name(pid)} /></div>)}
               </div>
               {!Object.keys(c.scores).length && c.result && <p className="empty">{view.settings.scoring ? 'No microphones were scoring this one.' : 'Scoring is off tonight.'}</p>}
             </motion.div>
