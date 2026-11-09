@@ -65,5 +65,5 @@ export function removeEntry(q: QueueEntry[], id: string): QueueEntry | null {
   return i < 0 ? null : q.splice(i, 1)[0];
 }
 
-/** Votes needed to skip: a clear majority of the people who could vote, never fewer than two. */
-export const skipThreshold = (voters: number, ratio: number) => Math.max(2, Math.ceil(voters * ratio));
+/** Votes needed to skip: a clear majority of the people who could vote, at least two when two can vote. */
+export const skipThreshold = (voters: number, ratio: number) => Math.min(Math.max(1, voters), Math.max(2, Math.ceil(voters * ratio)));

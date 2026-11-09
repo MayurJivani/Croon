@@ -168,6 +168,33 @@ export function lineAt(lyrics: Lyrics, t: number): number {
 export const wordProgress = (w: Word, t: number) => (t <= w.t ? 0 : t >= w.t + w.d ? 1 : (t - w.t) / w.d);
 
 /**
+ * When a line has been sung out. Word-timed: its last word ends. Line-timed lyrics only say when a
+ * line starts, so it is estimated from the text's length, never past the next line's start.
+ */
+// shortcut: a flat ~8 characters a second plus a lead-in, wrong for very slow or fast songs; word-timed lyrics replace it.
+export function sungEnd(line: Line, wordTimed: boolean): number {
+  const last = line.words.at(-1);
+  if (wordTimed && last) return last.t + last.d;
+  const chars = line.words.reduce((n, w) => n + [...w.text].length, 0);
+  return Math.min(line.end, line.t + 0.5 + chars * 0.12);
+}
+
+/** How far each word of a line is filled (0 to 1) at time t; line-timed words share the estimate by length. */
+export function wordFills(line: Line, t: number, wordTimed: boolean): number[] {
+  if (wordTimed) return line.words.map((w) => wordProgress(w, t));
+  const lens = line.words.map((w) => [...w.text].length || 1);
+  const total = lens.reduce((a, b) => a + b, 0);
+  const span = sungEnd(line, false) - line.t;
+  let at = line.t;
+  return lens.map((n) => {
+    const d = (span * n) / total;
+    const p = d > 0 ? Math.min(1, Math.max(0, (t - at) / d)) : t >= at ? 1 : 0;
+    at += d;
+    return p;
+  });
+}
+
+/**
  * Sync points pin lyric times to media times: [when the lyrics say a line starts, when this video
  * sings it]. One point is a plain offset. Two or more stretch the lyrics between them, which absorbs
  * karaoke edits that run at a slightly different speed or cut and extend sections.
@@ -214,7 +241,13 @@ export function addAnchor(anchors: Anchor[], lyricT: number, mediaT: number): An
   return [...keep, [r(lyricT), r(mediaT)] as Anchor].sort((a, b) => a[0] - b[0]).slice(-60);
 }
 
-/** Moves every sync point by `by` seconds (the plus and minus nudge); with none, makes one. */
+/**
+ * Nudges the lyrics at one line only: pins that line `by` seconds from where it plays now. Earlier
+ * sync points stay, so each nudge adds a point and fixes one section without undoing the others.
+ */
+export const nudgeAt = (anchors: Anchor[], lyricT: number, by: number): Anchor[] => addAnchor(anchors, lyricT, timeMap(anchors)(lyricT) + by);
+
+/** Moves every sync point by `by` seconds (the whole-song nudge); with none, makes one. */
 export const nudgeAnchors = (anchors: Anchor[], by: number): Anchor[] =>
   anchors.length ? anchors.map(([x, y]) => [x, Math.round((y + by) * 100) / 100] as Anchor) : [[0, Math.round(by * 100) / 100]];
 

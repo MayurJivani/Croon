@@ -37,8 +37,9 @@ export function useSongLyrics(song: SongMeta | null, inline?: string | null): Ly
   return state;
 }
 
-export type LyricPrefs = { style: 'classic' | 'word' | 'line' | 'cinematic' | 'dual'; size: number; position: 'top' | 'middle' | 'bottom'; roman: boolean; translation: boolean };
-export const DEFAULT_PREFS: LyricPrefs = { style: 'classic', size: 1, position: 'middle', roman: true, translation: false };
+/** script: which spelling is the big line; roman: also show the other one small under it. */
+export type LyricPrefs = { style: 'classic' | 'word' | 'line' | 'cinematic' | 'dual'; size: number; position: 'top' | 'middle' | 'bottom'; script: 'latin' | 'original'; roman: boolean; translation: boolean };
+export const DEFAULT_PREFS: LyricPrefs = { style: 'classic', size: 1, position: 'middle', script: 'latin', roman: true, translation: false };
 
 export function usePrefs<T extends object>(key: string, initial: T): [T, (p: Partial<T>) => void] {
   const [v, setV] = useState<T>(() => {

@@ -2,9 +2,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
-import { Play, Pause, SkipBack, SkipForward, Maximize, Minimize, Volume2, Mic, MicOff, RotateCcw, Rewind, FastForward, X } from 'lucide-react';
+import { Play, Pause, SkipBack, SkipForward, Maximize, Minimize, Volume2, Mic, MicOff, RotateCcw, Rewind, FastForward, X, Languages } from 'lucide-react';
 import type { SongMeta } from '../../../../packages/core/src/protocol.ts';
-import { mapLyrics, targets, lineAt, addAnchor, nudgeAnchors, type Anchor } from '../../../../packages/core/src/lyrics.ts';
+import { mapLyrics, targets, lineAt, addAnchor, nudgeAnchors, nudgeAt, type Anchor } from '../../../../packages/core/src/lyrics.ts';
 import { scoreFull, scoreLite, type Frame, type Score } from '../../../../packages/core/src/scoring.ts';
 import { useEngine, useMediaSession, useGetter } from '../lib/playback.ts';
 import { useSongLyrics, usePrefs, DEFAULT_PREFS, useTranslation, canTranslate, type LyricPrefs } from '../lib/lyrics.ts';
@@ -199,6 +199,19 @@ export default function Sing() {
       setErr((e as Error).message);
     }
   };
+  // Taps save themselves for everyone a few seconds after the last one (signed-in singers only).
+  useEffect(() => {
+    if (!user || song?.sources[0]?.kind !== 'youtube' || !changed) return;
+    const t = setTimeout(() => void saveTiming(), 3000);
+    return () => clearTimeout(t);
+  }, [anchors]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Plus and minus fix the part being sung (a new sync point at this line), not the whole song.
+  const nudgeHere = (by: number) => {
+    const ls = lyr.lyrics?.lines;
+    if (ls?.length) setAnchors((a) => nudgeAt(a, ls[Math.max(0, lyrics ? lineAt(lyrics, getPos()) : 0)].t, by));
+  };
+  const hasRoman = !!lyrics?.lines.some((l) => l.words.some((w) => w.roman));
+  const toggleScript = () => setPrefs({ script: prefs.script === 'original' ? 'latin' : 'original' });
 
   const play = () => {
     if (!engine) return;
@@ -271,6 +284,10 @@ export default function Sing() {
       } else if (e.key === 'ArrowRight') seek(pos + 5);
       else if (e.key === 'ArrowLeft') seek(pos - 5);
       else if (e.key === 'f') void toggleFull();
+      else if (e.key === 't' && hasRoman) toggleScript();
+      else if (e.key === 's' && lyrics) pickLine(lineAt(lyrics, pos) + 1); // the next line starts now
+      else if (e.key === '[') nudgeHere(-0.25);
+      else if (e.key === ']') nudgeHere(0.25);
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
@@ -313,7 +330,7 @@ export default function Sing() {
             <div className="beam-bg" aria-hidden />
             {isVideo && <div className="video-wrap" ref={setVideoEl} />}
             {scoring && ts.length > 0 && <PitchLane targets={ts} pos={getPos} trails={trail.current} height={full ? 110 : 72} />}
-            {lyrics && isVideo && <p className="sync-hint">Lyrics out of step with the video? Tap a line the moment you hear it.</p>}
+            {lyrics && isVideo && <p className="sync-hint">Lyrics out of step? Press S (or tap a line) the moment the next line starts.</p>}
             {lyrics ? <Lyrics lyrics={lyrics} pos={getPos} prefs={prefs} variant={full ? 'stage' : 'player'} onPickLine={isVideo || src.kind === 'file' ? pickLine : undefined} /> : (
               <div className="lyrics">{lyr.status === 'loading' ? <Loading label="Fetching lyrics" /> : <p className="empty">{isVideo ? 'No synced lyrics for this song. Karaoke videos show their own lyrics on screen.' : 'No lyrics available for this track.'}</p>}</div>
             )}
@@ -326,6 +343,7 @@ export default function Sing() {
                 <button className="icon-btn" onClick={() => seek(pos + 10)} aria-label="Forward 10 seconds"><FastForward size={18} /></button>
                 <button className="icon-btn" onClick={goNext} disabled={!next} aria-label="Next song"><SkipForward size={18} /></button>
                 <button className="icon-btn" onClick={restart} aria-label="Restart"><RotateCcw size={18} /></button>
+                {hasRoman && <button className="icon-btn" onClick={toggleScript} aria-label={prefs.script === 'original' ? 'Show lyrics in English letters (T)' : 'Show lyrics in the original script (T)'} title="Switch script (T)"><Languages size={18} /></button>}
                 <div className="vol">
                   <Volume2 size={18} aria-hidden />
                   <input type="range" min={0} max={1} step={0.05} value={ui.volume} onChange={(e) => setUi({ volume: Number(e.target.value) })} aria-label="Volume" />
@@ -371,14 +389,20 @@ export default function Sing() {
             <div>
               <h3>Lyric timing</h3>
               <div className="offset">
-                <Key size="sm" onClick={() => setAnchors((a) => nudgeAnchors(a, -0.25))} aria-label="Lyrics earlier">−0.25s</Key>
+                <Key size="sm" onClick={() => nudgeHere(-0.25)} aria-label="Lyrics earlier from this line ([)">−0.25s</Key>
                 <span className="num" style={{ minWidth: 80, textAlign: 'center' }}>{anchors.length ? `${anchors.length} sync point${anchors.length > 1 ? 's' : ''}` : 'As timed'}</span>
-                <Key size="sm" onClick={() => setAnchors((a) => nudgeAnchors(a, 0.25))} aria-label="Lyrics later">+0.25s</Key>
+                <Key size="sm" onClick={() => nudgeHere(0.25)} aria-label="Lyrics later from this line (])">+0.25s</Key>
+              </div>
+              <p className="field-hint" style={{ marginTop: 4 }}>Fixes the part playing now ([ and ]). Each part you fix keeps its own sync point.</p>
+              <div className="offset" style={{ marginTop: 8 }}>
+                <span className="field-hint">Whole song</span>
+                <Key size="sm" tone="ghost" onClick={() => setAnchors((a) => nudgeAnchors(a, -0.25))} aria-label="Whole song earlier">−0.25s</Key>
+                <Key size="sm" tone="ghost" onClick={() => setAnchors((a) => nudgeAnchors(a, 0.25))} aria-label="Whole song later">+0.25s</Key>
                 <Key size="sm" onClick={() => lyr.lyrics?.lines[0] && setAnchors((a) => addAnchor(a, lyr.lyrics!.lines[0].t, getPos()))} title="Press when the first line starts">First line now</Key>
                 {anchors.length > 0 && <Key size="sm" tone="ghost" onClick={() => setAnchors([])}>Reset</Key>}
               </div>
-              <p className="field-hint" style={{ marginTop: 6 }}>Karaoke videos are often a different edit, with a longer or shorter intro and sections cut. Tap a lyric line as it is sung: the first tap fixes the intro, a few more through the song keep it in step.</p>
-              {isVideo && user && changed && <Key size="sm" tone="hot" onClick={saveTiming} style={{ marginTop: 8 }}>Save this timing for everyone</Key>}
+              <p className="field-hint" style={{ marginTop: 6 }}>Karaoke videos are often a different edit. Press S as each new line starts: the first press fixes the intro, a few more keep the song in step.</p>
+              {isVideo && changed && <p className="field-hint">{user ? 'Saving this timing for everyone…' : <><Link to="/signin">Sign in</Link> to save this timing for everyone.</>}</p>}
               {isVideo && saved.length > 0 && !changed && <p className="field-hint">Using timing saved by an earlier singer.</p>}
             </div>
           )}

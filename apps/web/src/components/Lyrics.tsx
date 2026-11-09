@@ -2,7 +2,7 @@
 // written straight to CSS variables every animation frame, so highlighting tracks the audio clock
 // rather than React's render timing.
 import { useEffect, useRef, useState } from 'react';
-import { lineAt, joinWords, wordProgress, type Line, type Lyrics as L } from '../../../../packages/core/src/lyrics.ts';
+import { lineAt, joinWords, wordFills, sungEnd, type Line, type Lyrics as L } from '../../../../packages/core/src/lyrics.ts';
 import type { LyricPrefs } from '../lib/lyrics.ts';
 
 type Props = {
@@ -21,12 +21,13 @@ type Props = {
 const partClass = (l: Line, parts?: boolean) => (parts ? (l.part === 1 ? 'p1' : l.part === 2 ? 'p2' : 'pboth') : '');
 
 /** Timed pieces grouped into words: "Hap-" and "py" are two timed pieces of one unbreakable word. */
-function words(l: Line) {
+function words(l: Line, latin: boolean) {
   const out: { text: string; idx: number }[][] = [];
   let cur: { text: string; idx: number }[] = [];
   l.words.forEach((w, i) => {
-    cur.push({ text: w.text.replace(/-$/, ''), idx: i });
-    if (!w.text.endsWith('-')) {
+    const text = latin && w.roman ? w.roman : w.text;
+    cur.push({ text: text.replace(/-$/, ''), idx: i });
+    if (!text.endsWith('-')) {
       out.push(cur);
       cur = [];
     }
@@ -37,12 +38,13 @@ function words(l: Line) {
 
 function LineView({ line, li, active, state, prefs, parts, myPart, onPick }: { line: Line; li: number; active: boolean; state: 'past' | 'now' | 'next'; prefs: LyricPrefs; parts?: boolean; myPart?: number; onPick?: (i: number) => void }) {
   const mine = !myPart || !line.part || line.part === myPart;
-  const roman = prefs.roman && line.words.some((w) => w.roman);
+  const hasRoman = line.words.some((w) => w.roman);
+  const latin = prefs.script !== 'original' && hasRoman;
   return (
     <div className={`lyr-line ${state} ${partClass(line, parts)} ${mine ? '' : 'theirs'}${onPick ? ' pickable' : ''}`} data-active={active || undefined} data-line={li}
       {...(onPick ? { role: 'button', tabIndex: 0, title: 'Tap the moment this line is sung', onClick: () => onPick(li), onKeyDown: (e: React.KeyboardEvent) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), onPick(li)) } : {})}>
       <div className="lyr-text">
-        {words(line).map((word) => (
+        {words(line, latin).map((word) => (
           <span key={word[0].idx} className="word">
             {word.map((w) => (
               <span key={w.idx} className="w" data-w={w.idx} data-text={w.text}>
@@ -52,7 +54,7 @@ function LineView({ line, li, active, state, prefs, parts, myPart, onPick }: { l
           </span>
         ))}
       </div>
-      {roman && <div className="lyr-roman">{joinWords(line.words.map((w) => w.roman ?? ''))}</div>}
+      {prefs.roman && hasRoman && <div className="lyr-roman">{joinWords(line.words.map((w) => (latin ? w.text : w.roman ?? w.text)))}</div>}
       {prefs.translation && line.translation && <div className="lyr-trans">{line.translation}</div>}
     </div>
   );
@@ -61,6 +63,7 @@ function LineView({ line, li, active, state, prefs, parts, myPart, onPick }: { l
 export function Lyrics({ lyrics, pos, prefs, myPart, parts, variant = 'player', onPickLine }: Props) {
   const [idx, setIdx] = useState(-1);
   const [count, setCount] = useState(0);
+  const [done, setDone] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const idxRef = useRef(-1);
 
@@ -71,9 +74,11 @@ export function Lyrics({ lyrics, pos, prefs, myPart, parts, variant = 'player', 
       const i = lineAt(lyrics, t);
       // Count-in dots before a line that follows a gap of four seconds or more.
       const next = lyrics.lines[i + 1];
-      const prevEnd = i >= 0 ? lyrics.lines[i].end : 0;
+      const prevEnd = i >= 0 ? sungEnd(lyrics.lines[i], lyrics.wordTimed) : 0;
       const gapAhead = next && next.t - Math.max(prevEnd, t) <= 3 && next.t - prevEnd >= 4 && t >= prevEnd ? Math.ceil(next.t - t) : 0;
       setCount(gapAhead);
+      // A line that has been sung out makes way for the next one instead of holding the screen.
+      setDone(i >= 0 && !!next && t > prevEnd + 0.4);
       if (i !== idxRef.current) {
         idxRef.current = i;
         setIdx(i);
@@ -82,11 +87,11 @@ export function Lyrics({ lyrics, pos, prefs, myPart, parts, variant = 'player', 
       const el = root.current?.querySelector<HTMLElement>(`.lyr-line[data-active][data-line="${i}"]`);
       const line = lyrics.lines[i];
       if (el && line) {
+        const fills = wordFills(line, t, lyrics.wordTimed);
         const ws = el.querySelectorAll<HTMLElement>('.w');
         ws.forEach((node) => {
-          const w = line.words[Number(node.dataset.w)];
-          if (!w) return;
-          const p = lyrics.wordTimed ? wordProgress(w, t) : t >= line.t ? 1 : 0;
+          const p = fills[Number(node.dataset.w)];
+          if (p === undefined) return;
           node.style.setProperty('--p', `${(p * 100).toFixed(1)}%`);
           node.classList.toggle('sung', p >= 1);
           node.classList.toggle('on', p > 0);
@@ -98,10 +103,10 @@ export function Lyrics({ lyrics, pos, prefs, myPart, parts, variant = 'player', 
     return () => cancelAnimationFrame(raf);
   }, [lyrics, pos]);
 
-  const style = !lyrics.wordTimed && (prefs.style === 'classic' || prefs.style === 'word') ? 'line' : prefs.style;
+  const style = prefs.style;
   const ls = lyrics.lines;
   const cur = Math.max(0, idx);
-  const nowLine = idx >= 0 && ls[idx] ? ls[idx] : null;
+  const nowLine = idx >= 0 && ls[idx] && !(done && style === 'cinematic') ? ls[idx] : null;
   const upcoming = idx < 0 ? ls[0] : ls[idx + 1];
 
   let body;
@@ -132,7 +137,6 @@ export function Lyrics({ lyrics, pos, prefs, myPart, parts, variant = 'player', 
     <div ref={root} className={`lyrics v-${variant} s-${style} at-${prefs.position}`} style={{ '--lyr-scale': prefs.size } as React.CSSProperties} aria-live="off">
       <div className="lyr-count" aria-hidden>{[3, 2, 1].map((n) => <i key={n} className={count >= n ? 'lit' : ''} />)}</div>
       {body}
-      {!lyrics.wordTimed && <p className="lyr-note">Line-timed lyrics: whole lines light up, because word timing is not available for this song.</p>}
     </div>
   );
 }
