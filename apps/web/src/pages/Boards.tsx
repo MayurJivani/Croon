@@ -46,7 +46,7 @@ export default function Boards() {
           <>
             {tab === 'friends' && !user && <p className="empty"><Link to="/signin">Sign in</Link> and follow singers to see a friends ranking.</p>}
             <ol className="board">{rows.map((r) => <li key={r.username}><Avatar a={r.avatar} size={28} /><Link to={`/u/${r.username}`}>{r.display_name}</Link><small>{r.songs} songs</small><b>{r.score}</b></li>)}</ol>
-            {user && !rows.length && <p className="empty">{tab === 'friends' ? 'Follow singers from their profiles to build this board.' : 'Nobody has scored three songs yet. Be first.'}</p>}
+            {!rows.length && (user || tab !== 'friends') && <p className="empty">{tab === 'friends' ? 'Follow singers from their profiles to build this board.' : tab === 'week' ? 'Nobody has scored three songs this week yet. Be first.' : 'Nobody has scored three songs yet. Be first.'}</p>}
           </>
         )}
       </div>
