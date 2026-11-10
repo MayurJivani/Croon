@@ -40,7 +40,7 @@ async function deezer<T>(path: string): Promise<T> {
   throw new Error('Deezer is rate limiting; try again shortly.');
 }
 
-type DzTrack = { id: number; title: string; title_short?: string; duration: number; rank?: number; isrc?: string; artist: { id: number; name: string }; album?: { id: number; title: string; cover_medium?: string } };
+type DzTrack = { id: number; title: string; title_short?: string; duration: number; rank?: number; isrc?: string; preview?: string; artist: { id: number; name: string }; album?: { id: number; title: string; cover_medium?: string } };
 type DzAlbum = { id: number; title: string; record_type?: string; release_date?: string; cover_medium?: string; genres?: { data: { name: string }[] }; tracks?: { data: DzTrack[] }; artist?: { id: number; name: string } };
 
 const GENRE: Record<string, string> = { 'R&B': 'R&B and Soul', 'Rap/Hip Hop': 'Hip-Hop', Dance: 'EDM', Electro: 'Electronic', Films: 'Soundtrack', 'Films/Games': 'Soundtrack', Alternative: 'Indie', 'Asian Music': 'World', 'Bollywood': 'Bollywood', 'Latin Music': 'Latin', 'K-Pop': 'K-Pop', 'J-Pop': 'J-Pop' };
@@ -78,20 +78,49 @@ export async function saveExtra(raw: Raw, userId: string | null) {
   addExtraSong(raw);
 }
 
-/** Search Deezer for songs and artists, marking which songs Croon already has. */
-export async function discover(q: string) {
-  const [tracks, artists] = await Promise.all([
+/** Search Deezer for songs, artists and (for seeders) albums, marking which songs Croon already has. */
+export async function discover(q: string, withAlbums = false) {
+  const [tracks, artists, albums] = await Promise.all([
     deezer<{ data: DzTrack[] }>(`search?${new URLSearchParams({ q, limit: '20' })}`),
     deezer<{ data: { id: number; name: string; picture_medium: string; nb_album: number; nb_fan: number }[] }>(`search/artist?${new URLSearchParams({ q, limit: '4' })}`),
+    withAlbums ? deezer<{ data: (DzAlbum & { nb_tracks?: number })[] }>(`search/album?${new URLSearchParams({ q, limit: '6' })}`) : { data: [] },
   ]);
   return {
     songs: tracks.data.filter((t) => !isUnwantedVersion(t.title)).map((t) => ({
       deezerId: String(t.id), title: t.title_short || t.title, artist: t.artist.name, album: t.album?.title ?? null, artwork: t.album?.cover_medium ?? null,
-      duration: t.duration, inCatalog: !!catalogRaw(`dz:${t.id}`), key: `dz:${t.id}`,
+      // Deezer's own 30-second clip, played straight from its CDN.
+      duration: t.duration, preview: t.preview || null, inCatalog: !!catalogRaw(`dz:${t.id}`), key: `dz:${t.id}`,
     })),
     // Several artists often share a name; the one people actually listen to comes first.
     artists: artists.data.sort((a, b) => b.nb_fan - a.nb_fan).map((a) => ({ id: String(a.id), name: a.name, picture: a.picture_medium, albums: a.nb_album, fans: a.nb_fan })),
+    albums: albums.data.map((a) => ({ id: String(a.id), title: a.title, artist: a.artist?.name ?? '', cover: a.cover_medium ?? null, tracks: a.nb_tracks ?? 0 })),
   };
+}
+
+/** The original songs on one album (alternate versions dropped, edits under their clean title). */
+export async function albumSongs(albumId: string): Promise<Raw[]> {
+  const full = await deezer<DzAlbum>(`album/${albumId}`);
+  return (full.tracks?.data ?? []).flatMap((t) => {
+    const name = songTitle(t.title_short || t.title);
+    return name ? [{ ...toRaw(t, full), title: name }] : [];
+  });
+}
+
+/** Specific Deezer tracks, read one at a time to stay under Deezer's rate limit. */
+export async function trackSongs(ids: string[]): Promise<Raw[]> {
+  const out: Raw[] = [];
+  for (const id of ids) {
+    if (catalogRaw(`dz:${id}`)) {
+      out.push(catalogRaw(`dz:${id}`)!);
+      continue;
+    }
+    const t = await deezer<DzTrack & { album: { id: number } }>(`track/${id}`).catch(() => null);
+    if (!t) continue;
+    const album = t.album?.id ? await deezer<DzAlbum>(`album/${t.album.id}`).catch(() => null) : null;
+    out.push(toRaw(t, album));
+    await sleep(120);
+  }
+  return out;
 }
 
 /** Adds one Deezer track to the catalogue. */
@@ -206,14 +235,17 @@ const jobs = new Map<string, ImportJob>();
 export const getJob = (id: string) => jobs.get(id) ?? null;
 
 /** Imports a whole discography in the background and auto-finds lyrics and videos for it. */
-export function startArtistImport(artistId: string, artistName: string, userId: string | null): ImportJob {
+export const startArtistImport = (artistId: string, artistName: string, userId: string | null) => startImport(artistName, 'Reading the discography', () => discography(artistId), userId);
+
+/** Imports any set of songs (an artist, an album, a picked list) in the background, then auto-finds lyrics and videos. */
+export function startImport(label: string, reading: string, load: () => Promise<Raw[]>, userId: string | null): ImportJob {
   const running = [...jobs.values()].find((j) => j.status === 'running');
   if (running) return running; // one import at a time keeps Deezer, LRCLIB and the YouTube quota polite
-  const job: ImportJob = { id: randomUUID(), artist: artistName, status: 'running', total: 0, added: 0, already: 0, lyrics: 0, videos: 0, videoNote: null, current: 'Reading the discography', error: null, keys: [], startedAt: new Date().toISOString() };
+  const job: ImportJob = { id: randomUUID(), artist: label, status: 'running', total: 0, added: 0, already: 0, lyrics: 0, videos: 0, videoNote: null, current: reading, error: null, keys: [], startedAt: new Date().toISOString() };
   jobs.set(job.id, job);
   void (async () => {
     try {
-      const songs = await discography(artistId);
+      const songs = await load();
       job.total = songs.length;
       for (const raw of songs) {
         const key = `dz:${raw.id}`;
@@ -235,11 +267,11 @@ export function startArtistImport(artistId: string, artistName: string, userId: 
       }
       job.status = 'done';
       job.current = null;
-      logger.info({ artist: artistName, total: job.total, added: job.added, lyrics: job.lyrics, videos: job.videos }, 'artist import finished');
+      logger.info({ import: label, total: job.total, added: job.added, lyrics: job.lyrics, videos: job.videos }, 'import finished');
     } catch (err) {
       job.status = 'failed';
       job.error = (err as Error).message;
-      logger.warn({ err, artistId }, 'artist import failed');
+      logger.warn({ err, import: label }, 'import failed');
     }
   })();
   return job;

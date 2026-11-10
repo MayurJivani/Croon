@@ -53,6 +53,19 @@ test('a discography keeps one original recording per song', async () => {
   }
 });
 
+test('an album seeds its original songs only', async () => {
+  const { albumSongs } = await import('../src/services/imports.ts');
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (url: string) => new Response(JSON.stringify(responses[String(url).replace('https://api.deezer.com/', '')] ?? { error: { message: 'no fixture' } }))) as typeof fetch;
+  try {
+    const songs = await albumSongs('2');
+    assert.deepEqual(songs.map((s) => s.title), ['PILLOWTALK', 'BLUE', 'Like I Would']);
+    assert.equal(songs[0].album, 'Mind Of Mine (Deluxe)');
+  } finally {
+    globalThis.fetch = real;
+  }
+});
+
 test('edits keep the song, other versions do not', async () => {
   const { songTitle } = await import('../src/services/imports.ts');
   assert.equal(songTitle('Dusk Till Dawn (feat. Sia) (Radio Edit)'), 'Dusk Till Dawn (feat. Sia)');

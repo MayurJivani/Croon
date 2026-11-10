@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { sql } from '../db/client.ts';
 import { hashPassword, verifyPassword, newRecoveryCode, tidyRecoveryCode, passwordProblems, DUMMY_HASH } from '../auth/password.ts';
 import { HttpError } from '../middleware/http.ts';
+import { env } from '../env.ts';
 import { AVATAR_GLYPHS, AVATAR_COLORS } from '../../../../packages/core/src/protocol.ts';
 
 export const usernameSchema = z.string().trim().min(3, 'Usernames are 3 to 20 characters').max(20, 'Usernames are 3 to 20 characters').regex(/^[a-zA-Z0-9_]+$/, 'Letters, numbers and underscores only');
@@ -65,6 +66,12 @@ export async function getUser(id: string | null): Promise<PublicUser | null> {
   const [row] = await sql<Row[]>`select * from users where id = ${id}`;
   return row ? pub(row) : null;
 }
+
+/** Whether this signed-in user may seed albums and bulk lists (env SEEDERS). */
+export const isSeeder = async (id: string | null) => {
+  const u = await getUser(id);
+  return !!u && env.SEEDERS.includes(u.username.toLowerCase());
+};
 
 export async function userByName(username: string) {
   const [row] = await sql<(Row & { created_at: Date })[]>`select * from users where lower(username) = lower(${username})`;

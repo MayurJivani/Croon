@@ -28,7 +28,8 @@ export function createApp() {
           // Album art from Deezer's CDN (catalogue metadata) and video thumbnails from YouTube.
           imgSrc: ["'self'", 'data:', 'blob:', 'https://*.dzcdn.net', 'https://i.ytimg.com'],
           // Guest audio files play from blob: URLs made from the room's file endpoint.
-          mediaSrc: ["'self'", 'blob:'],
+          // Deezer's 30-second previews in "Find any song" stream from its CDN.
+          mediaSrc: ["'self'", 'blob:', 'https://*.dzcdn.net'],
           // Socket.IO is same-origin; 'self' matches same-origin ws/wss in current browsers.
           connectSrc: ["'self'"],
           // Motion writes inline transform styles.

@@ -17,6 +17,8 @@ const schema = z.object({
   TRUST_PROXY: z.coerce.number().int().min(0).default(0),
   // Pre-fetch synced lyrics for playable songs at startup so lyric search has text to search.
   WARM_LYRICS: z.enum(['0', '1']).default('1').transform((v) => v === '1'),
+  // Usernames (comma-separated, any case) allowed to seed whole albums and bulk track lists.
+  SEEDERS: z.string().default('IcarusFalls').transform((v) => v.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)),
 });
 
 export type Env = z.infer<typeof schema>;

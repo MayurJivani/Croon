@@ -1,14 +1,17 @@
 // Growing the library from the library itself: look a song or artist up on Deezer, bring it in,
 // and let Croon auto-find synced lyrics and a karaoke video for it.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Download, Disc3, Check } from 'lucide-react';
+import { Download, Disc3, Check, Play, Pause, ListPlus } from 'lucide-react';
 import type { SongMeta } from '../../../../packages/core/src/protocol.ts';
 import { api } from '../lib/api.ts';
 import { useSession } from '../lib/session.tsx';
 import { Key, Shelf, Toast, fmtTime, Loading } from './ui.tsx';
 
-type Found = { songs: { deezerId: string; title: string; artist: string; album: string | null; artwork: string | null; duration: number; inCatalog: boolean; key: string }[]; artists: { id: string; name: string; picture: string; albums: number; fans: number }[] };
+type Found = { songs: { deezerId: string; title: string; artist: string; album: string | null; artwork: string | null; duration: number; preview: string | null; inCatalog: boolean; key: string }[]; artists: { id: string; name: string; picture: string; albums: number; fans: number }[]; albums: { id: string; title: string; artist: string; cover: string | null; tracks: number }[] };
+
+/** Deezer track ids from pasted ids or deezer.com/track/... links, one per line or comma-separated. */
+export const trackIds = (text: string) => [...new Set([...text.matchAll(/(?:track\/)?(\d{3,15})/g)].map((m) => m[1]))];
 type Job = { id: string; artist: string; status: 'running' | 'done' | 'failed'; total: number; added: number; already: number; lyrics: number; videos: number; videoNote: string | null; current: string | null; error: string | null };
 type AutoFind = { lyrics: 'word' | 'line' | 'none'; video: string };
 
@@ -55,8 +58,22 @@ export function ImportProgress({ jobId }: { jobId: string }) {
 
 /** `onPick` (in a room): a song once it is in Croon goes to the caller instead of its song page, and whole discographies are left to the library. */
 export function FindAnySong({ initial, auto = false, onPick }: { initial: string; auto?: boolean; onPick?: (s: SongMeta) => void }) {
-  const { user } = useSession();
+  const { user, seeder } = useSession();
   const nav = useNavigate();
+  // One preview at a time, from Deezer's CDN; it stops when this section goes away.
+  const audio = useRef<HTMLAudioElement | null>(null);
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  useEffect(() => () => audio.current?.pause(), []);
+  const preview = (id: string, url: string) => {
+    audio.current?.pause();
+    if (playingId === id) return setPlayingId(null);
+    const a = new Audio(url);
+    a.onended = () => setPlayingId(null);
+    audio.current = a;
+    setPlayingId(id);
+    a.play().catch(() => setPlayingId(null));
+  };
+  const [bulk, setBulk] = useState('');
   const loc = useLocation();
   // Signed-out visitors get a working button that signs them in and brings them back to this search.
   const here = loc.pathname + loc.search;
@@ -98,10 +115,11 @@ export function FindAnySong({ initial, auto = false, onPick }: { initial: string
     }
   };
   const pickKnown = (key: string) => void api<{ song: SongMeta }>(`/songs/${encodeURIComponent(key)}`).then((r) => onPick!(r.song)).catch((e: Error) => setMsg({ t: e.message, tone: 'error' }));
-  const importArtist = async (id: string, name: string) => {
+  const importArtist = (id: string, name: string) => startJob(id, '/songs/import-artist', { artistId: id, name });
+  const startJob = async (id: string, path: string, body: unknown) => {
     setBusy(id);
     try {
-      const r = await api<{ job: { id: string } }>('/songs/import-artist', { method: 'POST', body: { artistId: id, name } });
+      const r = await api<{ job: { id: string } }>(path, { method: 'POST', body });
       setJobId(r.job.id);
     } catch (e) {
       setMsg({ t: (e as Error).message, tone: 'error' });
@@ -118,6 +136,12 @@ export function FindAnySong({ initial, auto = false, onPick }: { initial: string
         <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Song or artist" aria-label="Song or artist to find" style={{ flex: 1 }} minLength={2} required />
         <Key type="submit" disabled={busy === 'search'}>{busy === 'search' ? 'Looking…' : 'Look it up'}</Key>
       </form>
+      {seeder && !onPick && !jobId && (
+        <form className="row" onSubmit={(e) => { e.preventDefault(); const ids = trackIds(bulk); if (ids.length) void startJob('bulk', '/songs/import-bulk', { ids: ids.slice(0, 500) }); }}>
+          <textarea value={bulk} onChange={(e) => setBulk(e.target.value)} rows={3} placeholder="Bulk seed: Deezer track ids or deezer.com/track/… links, one per line (up to 500)" aria-label="Deezer tracks to seed" style={{ flex: 1 }} />
+          <Key type="submit" disabled={!!busy || !trackIds(bulk).length} icon={<ListPlus size={16} />}>Seed {trackIds(bulk).length || ''}</Key>
+        </form>
+      )}
       <Toast msg={msg?.t ?? null} tone={msg?.tone} />
       {jobId && <ImportProgress jobId={jobId} />}
       {found && !jobId && (
@@ -133,6 +157,17 @@ export function FindAnySong({ initial, auto = false, onPick }: { initial: string
               ))}
             </div>
           )}
+          {seeder && !onPick && found.albums.length > 0 && (
+            <div className="find-artists">
+              {found.albums.map((a) => (
+                <div key={a.id} className="find-artist">
+                  {a.cover && <img src={a.cover} alt="" width={56} height={56} loading="lazy" style={{ borderRadius: 4 }} />}
+                  <div><b>{a.title}</b><span>{a.artist} · {a.tracks} tracks</span></div>
+                  <Key size="sm" onClick={() => startJob(`album-${a.id}`, '/songs/import-album', { albumId: a.id, name: a.title })} disabled={!!busy} icon={<Disc3 size={14} />}>Seed album</Key>
+                </div>
+              ))}
+            </div>
+          )}
           <ul className="shelf">
             {found.songs.map((s) => (
               <li key={s.deezerId} className="find-song">
@@ -141,6 +176,9 @@ export function FindAnySong({ initial, auto = false, onPick }: { initial: string
                 <span className="spine-artist">{s.artist}</span>
                 <span className="spine-meta">
                   <span className="spine-facts num">{fmtTime(s.duration)}</span>
+                  {s.preview && (
+                    <Key size="sm" tone="card" onClick={() => preview(s.deezerId, s.preview!)} aria-label={`${playingId === s.deezerId ? 'Stop' : 'Play'} a 30-second preview of ${s.title}`} aria-pressed={playingId === s.deezerId} icon={playingId === s.deezerId ? <Pause size={14} /> : <Play size={14} />} />
+                  )}
                   {onPick && (s.inCatalog || done[s.deezerId]) ? (
                     <Key size="sm" tone="card" onClick={() => pickKnown(done[s.deezerId] ?? s.key)} disabled={!!busy} icon={<Check size={14} />}>Queue it</Key>
                   ) : s.inCatalog || done[s.deezerId] ? (

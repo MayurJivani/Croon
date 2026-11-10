@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { asyncH, requireAuth, searchLimiter, validate, writeLimiter, roomLimiter, HttpError } from '../middleware/http.ts';
-import { discover, importTrack, autoFind, startArtistImport, getJob } from '../services/imports.ts';
+import { discover, importTrack, autoFind, startArtistImport, startImport, albumSongs, trackSongs, getJob } from '../services/imports.ts';
+import { isSeeder } from '../services/users.ts';
 import { search, facets, songMeta, crate, CRATES, addSourceToMemory, playableKeys, catalogRaw, saveLyricAnchors, rejectSource } from '../services/catalog.ts';
 import { lyricsFor, lookupLyrics } from '../services/lyrics.ts';
 import { verifyVideo, videoIdFrom, searchKaraoke, searchAvailable } from '../services/youtube.ts';
@@ -42,8 +43,23 @@ songsRouter.get('/lookup/lyrics', searchLimiter, validate(z.object({ artist: z.s
 
 // ---- growing the library -------------------------------------------------------------------
 songsRouter.get('/discover', searchLimiter, validate(z.object({ q: z.string().trim().min(2).max(100) }), 'query'), asyncH(async (req, res) => {
-  res.json(await discover((req.query as unknown as { q: string }).q));
+  res.json(await discover((req.query as unknown as { q: string }).q, await isSeeder(req.session.userId)));
 }));
+
+// Seeding whole albums and bulk track lists is for the deployment's seeders only (env SEEDERS).
+const requireSeeder: typeof requireAuth = (req, _res, next) => {
+  isSeeder(req.session.userId).then((ok) => next(ok ? undefined : new HttpError(403, 'Only seeders can do that.')), next);
+};
+
+songsRouter.post('/import-album', requireAuth, requireSeeder, roomLimiter, validate(z.object({ albumId: z.string().regex(/^\d{1,15}$/), name: z.string().trim().min(1).max(160) })), (req, res) => {
+  res.status(202).json({ job: startImport(req.body.name, 'Reading the album', () => albumSongs(req.body.albumId), req.session.userId) });
+});
+
+// Bulk: Deezer track ids or track links, one import job for the lot.
+songsRouter.post('/import-bulk', requireAuth, requireSeeder, roomLimiter, validate(z.object({ ids: z.array(z.string().regex(/^\d{1,15}$/)).min(1).max(500) })), (req, res) => {
+  const ids = [...new Set(req.body.ids as string[])];
+  res.status(202).json({ job: startImport(`${ids.length} songs`, 'Reading the tracks', () => trackSongs(ids), req.session.userId) });
+});
 
 songsRouter.post('/import', requireAuth, writeLimiter, validate(z.object({ deezerId: z.string().regex(/^\d{1,15}$/) })), asyncH(async (req, res) => {
   const song = await importTrack(req.body.deezerId, req.session.userId);

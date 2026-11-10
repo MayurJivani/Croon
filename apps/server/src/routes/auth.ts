@@ -2,12 +2,12 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { asyncH, authLimiter, generateCsrfToken, requireAuth, validate, writeLimiter } from '../middleware/http.ts';
 import { bindUser, signOut, endOtherSessions } from '../auth/session.ts';
-import { register, login, recover, getUser, updateProfile, changePassword, usernameSchema, avatarSchema } from '../services/users.ts';
+import { register, login, recover, getUser, isSeeder, updateProfile, changePassword, usernameSchema, avatarSchema } from '../services/users.ts';
 
 export const authRouter = Router();
 const password = z.string().min(1).max(200);
 
-authRouter.get('/me', asyncH(async (req, res) => res.json({ user: await getUser(req.session.userId) })));
+authRouter.get('/me', asyncH(async (req, res) => res.json({ user: await getUser(req.session.userId), seeder: await isSeeder(req.session.userId) })));
 
 authRouter.post('/register', authLimiter, validate(z.object({ username: usernameSchema, displayName: z.string().trim().max(32).optional(), password, avatar: avatarSchema.optional() })), asyncH(async (req, res) => {
   const { user, recoveryCode } = await register(req.body);

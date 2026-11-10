@@ -97,7 +97,10 @@ function HeroTape() {
           </label>
           <Key type="submit">Join</Key>
         </form>
-        <div className="counter num" aria-label={`Tape counter ${counter}`}>{counter.split('').map((d, i) => <b key={i}>{d}</b>)}</div>
+        <div className="counter num" aria-label={`Tape counter ${counter}`}>{counter.split('').map((d, i) => (
+          // shortcut: 9 to 0 rolls back up the drum instead of on past it; add a wrap digit if it bothers.
+          <b key={i}><span aria-hidden style={{ transform: `translateY(${-Number(d) * 10}%)` }}>{[...'0123456789'].map((n) => <i key={n}>{n}</i>)}</span></b>
+        ))}</div>
         <Key onClick={toggle} down={playing} icon={playing ? <Pause size={18} /> : <Play size={18} />} aria-label={playing ? 'Pause the preview' : 'Play the preview'}>{playing ? 'Pause' : 'Play'}</Key>
       </div>
       <Toast msg={err} tone="error" />
