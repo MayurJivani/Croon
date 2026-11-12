@@ -32,7 +32,7 @@ import { FindAnySong } from '../components/FindAnySong.tsx';
 const ME_KEY = 'croon:me';
 const pickRandom = <T,>(a: readonly T[]) => a[Math.floor(Math.random() * a.length)];
 
-function JoinGate({ code, onJoin }: { code: string; onJoin(me: { name: string; avatar: AvatarT }): void }) {
+function JoinGate({ code, prefill, auto, onJoin }: { code: string; prefill: string; auto: boolean; onJoin(me: { name: string; avatar: AvatarT }): void }) {
   const { user } = useSession();
   const saved = useMemo(() => {
     try {
@@ -41,15 +41,14 @@ function JoinGate({ code, onJoin }: { code: string; onJoin(me: { name: string; a
       return null;
     }
   }, []);
-  const [name, setName] = useState(saved?.name ?? user?.displayName ?? '');
+  const [name, setName] = useState(prefill || (saved?.name ?? user?.displayName ?? ''));
   const [avatar, setAvatar] = useState<AvatarT>(saved?.avatar ?? user?.avatar ?? { glyph: pickRandom(AVATAR_GLYPHS), color: pickRandom(AVATAR_COLORS) });
   const [info, setInfo] = useState<{ name: string; people: number; kind: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
     api<{ name: string; people: number; kind: string }>(`/rooms/${code}`).then(setInfo).catch((e) => setErr(e.message));
   }, [code]);
-  const submit = (e: FormEvent) => {
-    e.preventDefault();
+  const join = () => {
     const me = { name: name.trim().slice(0, 24), avatar };
     try {
       localStorage.setItem(ME_KEY, JSON.stringify(me));
@@ -58,6 +57,13 @@ function JoinGate({ code, onJoin }: { code: string; onJoin(me: { name: string; a
     }
     onJoin(me);
   };
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    join();
+  };
+  useEffect(() => {
+    if (auto && prefill) join();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   if (err) return <div className="join-gate"><h1>Room {code}</h1><Toast msg={err} tone="error" /><Link to="/rooms" className="key key-md"><span>Try another code</span></Link></div>;
   return (
     <form className="join-gate" onSubmit={submit}>
@@ -417,6 +423,15 @@ export default function Room() {
   const [sp] = useSearchParams();
   const [me, setMe] = useState<{ name: string; avatar: AvatarT } | null>(null);
   const { view, pid, error, status, emit, live, serverNow } = useRoom(code, me);
+  const [prefill] = useState(() => (sp.get('name') ?? '').trim().slice(0, 24));
+  const auto = useRef(!!prefill);
+  useEffect(() => {
+    // A link's auto-join is tried once; if the server refuses it, show the form instead.
+    if (auto.current && me && error && !view) {
+      auto.current = false;
+      setMe(null);
+    }
+  }, [me, error, view]);
   const [tab, setTab] = useState<'queue' | 'add' | 'people' | 'board' | 'settings'>(sp.get('add') ? 'add' : 'queue');
   const [prefs, setPrefs] = usePrefs<LyricPrefs>('croon:phone-lyrics', DEFAULT_PREFS);
   const [calib, setCalib] = useState(false);
@@ -454,7 +469,7 @@ export default function Room() {
     return r;
   }, [emit]);
 
-  if (!me) return <JoinGate code={code} onJoin={setMe} />;
+  if (!me) return <JoinGate code={code} prefill={prefill} auto={auto.current} onJoin={setMe} />;
   if (status === 'kicked') return <div className="join-gate"><h1>You were removed</h1><p className="empty">The host removed you from room {code}.</p><Link to="/" className="key key-md"><span>Back to the lounge</span></Link></div>;
   if (status === 'closed') return <div className="join-gate"><h1>The room has closed</h1><p className="empty">Thanks for singing.</p><Link to="/rooms" className="key key-md"><span>Start or join another</span></Link></div>;
   if (error && !view) return <div className="join-gate"><Toast msg={error} tone="error" /><Link to="/rooms" className="key key-md"><span>Back to rooms</span></Link></div>;
