@@ -4,17 +4,18 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { Play, Pause, Users, Mic } from 'lucide-react';
-import { HouseEngine } from '../audio/engines.ts';
-import { compile, houseSong } from '../../../../packages/core/src/houseband.ts';
+import { mapLyrics } from '../../../../packages/core/src/lyrics.ts';
 import type { SongMeta } from '../../../../packages/core/src/protocol.ts';
 import { Lyrics } from '../components/Lyrics.tsx';
 import { Key, Reel, Shelf, genreInk, langName, Toast } from '../components/ui.tsx';
-import { DEFAULT_PREFS } from '../lib/lyrics.ts';
+import { DEFAULT_PREFS, useSongLyrics } from '../lib/lyrics.ts';
+import { useEngine } from '../lib/playback.ts';
 import { api } from '../lib/api.ts';
 import { saveHostToken } from '../lib/room.ts';
 import { useSession } from '../lib/session.tsx';
 
-const PREVIEW = 'when-the-saints';
+// Talk to me in French, Run it's the Kid (karaoke video).
+const PREVIEW = 'dz:3813565582';
 type Home = {
   trending: SongMeta[]; popular: SongMeta[]; recentlyAdded: SongMeta[]; recommended: SongMeta[]; recentlyPlayed: SongMeta[];
   crates: { id: string; name: string; blurb: string; total: number; playable: number; songs: SongMeta[] }[];
@@ -23,38 +24,49 @@ type Home = {
 type Facets = { genres: { name: string; total: number; playable: number }[]; languages: { code: string; name: string; total: number; playable: number }[] };
 
 function HeroTape() {
-  const song = useMemo(() => compile(houseSong(PREVIEW)!), []);
-  const engine = useRef<HouseEngine | null>(null);
+  const [song, setSong] = useState<SongMeta | null>(null);
+  const [videoEl, setVideoEl] = useState<HTMLDivElement | null>(null);
   const [playing, setPlaying] = useState(false);
   const [pos, setPos] = useState(0);
   const [code, setCode] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const nav = useNavigate();
 
-  useEffect(() => () => engine.current?.destroy(), []);
+  useEffect(() => {
+    api<{ song: SongMeta }>(`/songs/${encodeURIComponent(PREVIEW)}`).then((r) => setSong(r.song)).catch((e) => setErr(e.message));
+  }, []);
+  const { engine, duration, error } = useEngine(song, { videoEl, enabled: !!song });
+  const src = song?.sources[0];
+  const lyr = useSongLyrics(song);
+  const lyrics = useMemo(() => (lyr.lyrics ? mapLyrics(lyr.lyrics, src?.kind === 'youtube' ? src.lyricAnchors ?? [] : []) : null), [lyr.lyrics, src]);
+  const engineRef = useRef(engine);
+  engineRef.current = engine;
+
+  useEffect(() => {
+    if (!engine) return;
+    engine.onEnded = () => {
+      setPlaying(false);
+      setPos(0);
+    };
+    engine.onPlayingChange = setPlaying;
+  }, [engine]);
   useEffect(() => {
     if (!playing) return;
-    const t = setInterval(() => setPos(engine.current?.position() ?? 0), 250);
+    const t = setInterval(() => setPos(engineRef.current?.position() ?? 0), 250);
     return () => clearInterval(t);
   }, [playing]);
 
   const toggle = () => {
-    if (!engine.current) {
-      engine.current = new HouseEngine(PREVIEW);
-      engine.current.onEnded = () => {
-        setPlaying(false);
-        setPos(0);
-      };
-    }
+    if (!engine) return;
     if (playing) {
-      engine.current.pause();
+      engine.pause();
       setPlaying(false);
     } else {
-      engine.current.play(pos >= song.duration - 1 ? 0 : pos);
+      engine.play(pos >= duration - 1 ? 0 : pos);
       setPlaying(true);
     }
   };
-  const getPos = useMemo(() => () => engine.current?.position() ?? 0, []);
+  const getPos = useMemo(() => () => engineRef.current?.position() ?? 0, []);
   const join = async (e: FormEvent) => {
     e.preventDefault();
     const c = code.trim().toUpperCase();
@@ -77,15 +89,16 @@ function HeroTape() {
         <div className="label-head">
           <span className="side" aria-hidden>A</span>
           <div className="label-title">
-            {song.song.title}
-            <small>House band · public domain · full song, {Math.floor(song.duration / 60)}:{String(Math.round(song.duration % 60)).padStart(2, '0')}</small>
+            {song ? `${song.title} · ${song.artist}` : 'Loading the tape…'}
+            {src?.kind === 'youtube' && <small>Karaoke video · {src.channel.trim()} · full song, {Math.floor(duration / 60)}:{String(Math.round(duration % 60)).padStart(2, '0')}</small>}
           </div>
         </div>
         <div className="label-lyric">
-          <Lyrics lyrics={song.lyrics} pos={getPos} prefs={{ ...DEFAULT_PREFS, style: 'classic', roman: false }} variant="phone" />
+          {lyrics && <Lyrics lyrics={lyrics} pos={getPos} prefs={{ ...DEFAULT_PREFS, style: 'classic', roman: false }} variant="phone" />}
         </div>
-        <div className="window" aria-hidden>
+        <div className="window">
           <Reel spinning={playing} />
+          <div className="video-wrap" ref={setVideoEl} />
           <Reel spinning={playing} />
         </div>
       </div>
@@ -101,9 +114,9 @@ function HeroTape() {
           // shortcut: 9 to 0 rolls back up the drum instead of on past it; add a wrap digit if it bothers.
           <b key={i}><span aria-hidden style={{ transform: `translateY(${-Number(d) * 10}%)` }}>{[...'0123456789'].map((n) => <i key={n}>{n}</i>)}</span></b>
         ))}</div>
-        <Key onClick={toggle} down={playing} icon={playing ? <Pause size={18} /> : <Play size={18} />} aria-label={playing ? 'Pause the preview' : 'Play the preview'}>{playing ? 'Pause' : 'Play'}</Key>
+        <Key onClick={toggle} disabled={!engine} down={playing} icon={playing ? <Pause size={18} /> : <Play size={18} />} aria-label={playing ? 'Pause the preview' : 'Play the preview'}>{playing ? 'Pause' : 'Play'}</Key>
       </div>
-      <Toast msg={err} tone="error" />
+      <Toast msg={error ?? err} tone="error" />
     </div>
   );
 }
