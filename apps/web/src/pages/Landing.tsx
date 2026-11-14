@@ -98,7 +98,7 @@ function HeroTape() {
         </div>
         <div className="window">
           <Reel spinning={playing} />
-          <div className="video-wrap" ref={setVideoEl} />
+          <div className="video-wrap" ref={setVideoEl} aria-hidden />
           <Reel spinning={playing} />
         </div>
       </div>
